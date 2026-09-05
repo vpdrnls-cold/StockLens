@@ -302,6 +302,24 @@ horizon → label construction → leakage rules
 PHASE E Rule-based baseline → explainable signal scores → stock ranking
 → baseline backtest
 
+E-1 Rule/Strategy Research
+기존의 공개된 투자 전략 및 논문을 조사하고, 적용 가능한 전략의 수학적 가정과 신호 생성 방식을 이해한다.
+
+E-2 Strategy Hypothesis
+사용할 지표, 조건, threshold, weighting 등을 가설로 정의한다.
+
+E-3 Baseline Implementation
+전략을 재현 가능하고 설명 가능한 코드로 구현한다.
+
+E-4 Parameter Experimentation
+threshold, weighting, holding period 등의 민감도를 검증한다.
+
+E-5 Baseline Backtest
+거래비용, 슬리피지 등을 포함해 시간순 백테스트를 수행한다.
+
+E-6 Baseline Selection
+최종 test period를 건드리지 않고 validation 결과를 바탕으로 baseline을 확정한다.
+
 PHASE F Feature Selection → performed only within training context →
 relevance → redundancy → stability → no future leakage
 
