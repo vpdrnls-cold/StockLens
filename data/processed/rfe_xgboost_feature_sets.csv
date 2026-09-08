@@ -1,0 +1,11 @@
+n_features_to_select,step,selected_features
+5,1.0,"['sma_20', 'sma_60', 'price_to_sma_60', 'volatility_20', 'atr_14']"
+5,0.1,"['sma_20', 'sma_60', 'price_to_sma_60', 'volatility_20', 'atr_14']"
+10,1.0,"['return_5d', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_60', 'roc_20', 'macd', 'macd_hist', 'volatility_20', 'atr_14']"
+10,0.1,"['return_5d', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_60', 'rsi_14', 'macd', 'volatility_20', 'atr_14', 'volume_sma_20']"
+15,1.0,"['return_5d', 'return_20d', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_60', 'rsi_14', 'roc_20', 'macd', 'macd_signal', 'macd_hist', 'volatility_5', 'volatility_20', 'atr_14', 'volume_sma_20']"
+15,0.1,"['return_5d', 'high_low_range', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_60', 'rsi_14', 'macd', 'macd_signal', 'macd_hist', 'volatility_5', 'volatility_20', 'atr_14', 'volume_sma_20']"
+20,1.0,"['return_5d', 'return_10d', 'return_20d', 'high_low_range', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd', 'macd_signal', 'macd_hist', 'volatility_5', 'volatility_20', 'atr_14', 'volume_sma_20']"
+20,0.1,"['return_5d', 'return_10d', 'return_20d', 'high_low_range', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd', 'macd_signal', 'macd_hist', 'volatility_5', 'volatility_20', 'atr_14', 'volume_sma_20']"
+25,1.0,"['return_1d', 'return_5d', 'return_10d', 'return_20d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd', 'macd_signal', 'macd_hist', 'volatility_5', 'volatility_20', 'atr_14', 'volume_change_1d', 'volume_sma_20', 'volume_ratio_20']"
+25,0.1,"['return_1d', 'return_5d', 'return_10d', 'return_20d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd', 'macd_signal', 'macd_hist', 'volatility_5', 'volatility_20', 'atr_14', 'volume_change_1d', 'volume_sma_20', 'volume_ratio_20']"
