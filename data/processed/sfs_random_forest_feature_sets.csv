@@ -1,0 +1,13 @@
+n_features_to_select,tol,n_selected_features,selected_features
+5,0.0,5,"sma_60,price_to_sma_60,macd_signal,volatility_20,volume_sma_20"
+5,0.001,5,"sma_60,price_to_sma_60,macd_signal,volatility_20,volume_sma_20"
+5,0.005,5,"sma_60,price_to_sma_60,macd_signal,volatility_20,volume_sma_20"
+10,0.0,10,"sma_5,sma_20,sma_60,price_to_sma_60,macd,macd_signal,macd_hist,volatility_20,atr_14,volume_sma_20"
+10,0.001,10,"sma_5,sma_20,sma_60,price_to_sma_60,macd,macd_signal,macd_hist,volatility_20,atr_14,volume_sma_20"
+10,0.005,10,"sma_5,sma_20,sma_60,price_to_sma_60,macd,macd_signal,macd_hist,volatility_20,atr_14,volume_sma_20"
+15,0.0,15,"return_10d,sma_5,sma_20,sma_60,price_to_sma_5,price_to_sma_20,price_to_sma_60,roc_10,macd,macd_signal,macd_hist,volatility_5,volatility_20,atr_14,volume_sma_20"
+15,0.001,15,"return_10d,sma_5,sma_20,sma_60,price_to_sma_5,price_to_sma_20,price_to_sma_60,roc_10,macd,macd_signal,macd_hist,volatility_5,volatility_20,atr_14,volume_sma_20"
+15,0.005,15,"return_10d,sma_5,sma_20,sma_60,price_to_sma_5,price_to_sma_20,price_to_sma_60,roc_10,macd,macd_signal,macd_hist,volatility_5,volatility_20,atr_14,volume_sma_20"
+20,0.0,20,"return_5d,return_10d,return_20d,gap,sma_5,sma_20,sma_60,price_to_sma_5,price_to_sma_20,price_to_sma_60,rsi_14,roc_10,roc_20,macd,macd_signal,macd_hist,volatility_5,volatility_20,atr_14,volume_sma_20"
+20,0.001,20,"return_5d,return_10d,return_20d,gap,sma_5,sma_20,sma_60,price_to_sma_5,price_to_sma_20,price_to_sma_60,rsi_14,roc_10,roc_20,macd,macd_signal,macd_hist,volatility_5,volatility_20,atr_14,volume_sma_20"
+20,0.005,20,"return_5d,return_10d,return_20d,gap,sma_5,sma_20,sma_60,price_to_sma_5,price_to_sma_20,price_to_sma_60,rsi_14,roc_10,roc_20,macd,macd_signal,macd_hist,volatility_5,volatility_20,atr_14,volume_sma_20"
