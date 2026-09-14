@@ -113,3 +113,29 @@ def load_train_val_test() -> tuple[
 ]:
     """Convenience wrapper returning ``(X, y)`` for all three splits."""
     return load_split("train"), load_split("validation"), load_split("test")
+
+
+def baseline_mean_metrics(y_train: pd.Series, y_eval: pd.Series) -> dict:
+    """Metrics for the "predict the train mean for everything" baseline.
+
+    Every feature-selection method should be compared against this, not
+    just against each other. With a low signal-to-noise target like
+    ``target_return_5d``, a config that uses zero features (e.g. Lasso
+    collapsing every coefficient to 0) is mathematically identical to
+    this baseline -- so this makes that visible in the comparison table
+    instead of looking like an unexplained top result.
+    """
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+    y_pred = pd.Series(y_train.mean(), index=y_eval.index)
+
+    mse = mean_squared_error(y_eval, y_pred)
+
+    return {
+        "method": "Baseline (predict train mean)",
+        "n_selected_features": 0,
+        "selected_features": [],
+        "RMSE": mse ** 0.5,
+        "MAE": mean_absolute_error(y_eval, y_pred),
+        "R2": r2_score(y_eval, y_pred),
+    }

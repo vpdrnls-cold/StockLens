@@ -1,0 +1,6 @@
+method,n_selected_features,selected_features,RMSE,MAE,R2
+RandomForest Importance,5,"['sma_60', 'sma_5', 'volatility_20', 'sma_20', 'atr_14']",0.10221513904944973,0.07579781450898174,0.04658673443065697
+RandomForest Importance,10,"['sma_60', 'sma_5', 'volatility_20', 'sma_20', 'atr_14', 'volume_sma_20', 'macd_signal', 'price_to_sma_60', 'macd_hist', 'rsi_14']",0.1028334748358455,0.07686863599399146,0.035016771626292575
+RandomForest Importance,15,"['sma_60', 'sma_5', 'volatility_20', 'sma_20', 'atr_14', 'volume_sma_20', 'macd_signal', 'price_to_sma_60', 'macd_hist', 'rsi_14', 'macd', 'price_to_sma_20', 'roc_20', 'return_5d', 'volatility_5']",0.1030990288240758,0.07728618204992223,0.030026450761147294
+RandomForest Importance,20,"['sma_60', 'sma_5', 'volatility_20', 'sma_20', 'atr_14', 'volume_sma_20', 'macd_signal', 'price_to_sma_60', 'macd_hist', 'rsi_14', 'macd', 'price_to_sma_20', 'roc_20', 'return_5d', 'volatility_5', 'volume_ratio_20', 'return_20d', 'roc_10', 'gap', 'return_10d']",0.10320519882607679,0.07750982376541259,0.028027690547192563
+Baseline (predict train mean),0,[],0.10513243106454656,0.07744249854503835,-0.008612060473100147

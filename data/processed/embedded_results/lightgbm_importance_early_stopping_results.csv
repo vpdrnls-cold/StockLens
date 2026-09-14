@@ -1,0 +1,6 @@
+method,n_selected_features,selected_features,RMSE,MAE,R2,best_iteration
+LightGBM Importance (early stopping),20,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5', 'atr_14', 'price_to_sma_60', 'macd_hist', 'macd', 'volatility_5', 'return_10d', 'high_low_range', 'rsi_14', 'sma_20', 'volume_ratio_20', 'return_20d', 'price_to_sma_5', 'return_5d', 'volume_change_1d', 'gap']",0.10244789733616842,0.07588169904996186,0.04223967770332371,28.0
+LightGBM Importance (early stopping),15,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5', 'atr_14', 'price_to_sma_60', 'macd_hist', 'macd', 'volatility_5', 'return_10d', 'high_low_range', 'rsi_14', 'sma_20', 'volume_ratio_20']",0.10299583120773685,0.07609053192962206,0.03196728108701852,20.0
+LightGBM Importance (early stopping),10,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5', 'atr_14', 'price_to_sma_60', 'macd_hist', 'macd', 'volatility_5']",0.10306466964101707,0.0761801805110628,0.0306728573412014,10.0
+LightGBM Importance (early stopping),5,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5']",0.1032324918566498,0.07717459943334994,0.027513538586103614,9.0
+Baseline (predict train mean),0,[],0.10513243106454656,0.07744249854503835,-0.008612060473100147,

@@ -1,0 +1,6 @@
+method,n_selected_features,selected_features,RMSE,MAE,R2,best_iteration
+XGBoost Importance (early stopping),5,"['sma_60', 'atr_14', 'sma_5', 'roc_20', 'volatility_20']",0.10190213553613033,0.07634308232833083,0.052416884261939356,40.0
+XGBoost Importance (early stopping),10,"['sma_60', 'atr_14', 'sma_5', 'roc_20', 'volatility_20', 'price_to_sma_20', 'macd_hist', 'return_20d', 'macd', 'sma_20']",0.10195552912322535,0.0757951925146691,0.0514236152508456,17.0
+XGBoost Importance (early stopping),15,"['sma_60', 'atr_14', 'sma_5', 'roc_20', 'volatility_20', 'price_to_sma_20', 'macd_hist', 'return_20d', 'macd', 'sma_20', 'macd_signal', 'volume_sma_20', 'roc_10', 'rsi_14', 'price_to_sma_60']",0.1027166524234222,0.07574281164393755,0.037208035420764785,12.0
+XGBoost Importance (early stopping),20,"['sma_60', 'atr_14', 'sma_5', 'roc_20', 'volatility_20', 'price_to_sma_20', 'macd_hist', 'return_20d', 'macd', 'sma_20', 'macd_signal', 'volume_sma_20', 'roc_10', 'rsi_14', 'price_to_sma_60', 'volatility_5', 'volume_ratio_20', 'return_5d', 'intraday_return', 'gap']",0.10317721589706884,0.07664358838419094,0.0285546978131217,16.0
+Baseline (predict train mean),0,[],0.10513243106454656,0.07744249854503835,-0.008612060473100147,

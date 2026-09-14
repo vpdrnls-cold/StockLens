@@ -1,0 +1,6 @@
+method,n_selected_features,selected_features,RMSE,MAE,R2
+Baseline (predict train mean),0,[],0.10513243106454656,0.07744249854503835,-0.008612060473100147
+LightGBM Importance,20,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5', 'atr_14', 'price_to_sma_60', 'macd_hist', 'macd', 'volatility_5', 'return_10d', 'high_low_range', 'rsi_14', 'sma_20', 'volume_ratio_20', 'return_20d', 'price_to_sma_5', 'return_5d', 'volume_change_1d', 'gap']",0.10988991662435532,0.08302679810498191,-0.10196152280197723
+LightGBM Importance,10,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5', 'atr_14', 'price_to_sma_60', 'macd_hist', 'macd', 'volatility_5']",0.11272610187939491,0.08484152499161525,-0.15957734300022852
+LightGBM Importance,5,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5']",0.11322977016949558,0.08798542338016006,-0.169962641512448
+LightGBM Importance,15,"['volume_sma_20', 'sma_60', 'volatility_20', 'macd_signal', 'sma_5', 'atr_14', 'price_to_sma_60', 'macd_hist', 'macd', 'volatility_5', 'return_10d', 'high_low_range', 'rsi_14', 'sma_20', 'volume_ratio_20']",0.11424245320119525,0.08642529363134138,-0.19098360647790047
