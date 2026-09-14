@@ -1,13 +1,13 @@
-n_features_to_select,tol,n_selected_features,MSE,RMSE,MAE,R2
-5,0.0,5,0.002336353741440575,0.04833584323709037,0.033952454434207704,0.6062458018628231
-5,0.001,5,0.0023363537414405745,0.048335843237090365,0.033952454434207704,0.6062458018628231
-5,0.005,5,0.002336353741440575,0.04833584323709037,0.033952454434207704,0.6062458018628231
-10,0.0,10,0.0022032352607527284,0.04693863292377323,0.03299694831816808,0.6278284273431208
-10,0.001,10,0.0022032352607527284,0.04693863292377323,0.03299694831816807,0.6278284273431208
-10,0.005,10,0.0022032352607527284,0.04693863292377323,0.03299694831816808,0.6278284273431208
-15,0.0,15,0.0024331653837429937,0.049327126246549106,0.0347886062344983,0.5889332206376185
-15,0.001,15,0.0024331653837429933,0.0493271262465491,0.034788606234498295,0.5889332206376185
-15,0.005,15,0.0024331653837429933,0.0493271262465491,0.034788606234498295,0.5889332206376185
-20,0.0,20,0.0027226516935649476,0.05217903500032314,0.037012575697099016,0.5408977847380997
-20,0.001,20,0.0027226516935649476,0.05217903500032314,0.037012575697099016,0.5408977847380996
-20,0.005,20,0.0027226516935649476,0.05217903500032314,0.037012575697099016,0.5408977847380997
+method,n_features_to_select,tol,n_selected_features,selected_features,RMSE,MAE,R2
+SFS + Random Forest,20,0.0,20,"['return_1d', 'return_5d', 'return_10d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd_hist', 'volatility_5', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10594464951438347,0.07990528218529488,-0.024256667978984403
+SFS + Random Forest,20,0.001,20,"['return_1d', 'return_5d', 'return_10d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd_hist', 'volatility_5', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10594464951438347,0.07990528218529486,-0.024256667978984403
+SFS + Random Forest,20,0.005,20,"['return_1d', 'return_5d', 'return_10d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_20', 'sma_60', 'price_to_sma_5', 'price_to_sma_20', 'price_to_sma_60', 'rsi_14', 'roc_10', 'roc_20', 'macd_hist', 'volatility_5', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10594464951438347,0.07990528218529488,-0.024256667978984403
+SFS + Random Forest,15,0.001,15,"['return_1d', 'return_5d', 'return_10d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_60', 'price_to_sma_5', 'rsi_14', 'roc_10', 'macd_hist', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10615418970881606,0.0798291217714911,-0.028312279770089432
+SFS + Random Forest,15,0.0,15,"['return_1d', 'return_5d', 'return_10d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_60', 'price_to_sma_5', 'rsi_14', 'roc_10', 'macd_hist', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10615418970881607,0.0798291217714911,-0.028312279770089432
+SFS + Random Forest,15,0.005,15,"['return_1d', 'return_5d', 'return_10d', 'intraday_return', 'high_low_range', 'gap', 'sma_5', 'sma_60', 'price_to_sma_5', 'rsi_14', 'roc_10', 'macd_hist', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10615418970881607,0.0798291217714911,-0.028312279770089432
+SFS + Random Forest,5,0.0,5,"['return_5d', 'high_low_range', 'gap', 'price_to_sma_5', 'volume_change_1d']",0.10639209959689448,0.07982792504573098,-0.03292669596348974
+SFS + Random Forest,5,0.001,5,"['return_5d', 'high_low_range', 'gap', 'price_to_sma_5', 'volume_change_1d']",0.10639209959689448,0.07982792504573098,-0.03292669596348974
+SFS + Random Forest,5,0.005,5,"['return_5d', 'high_low_range', 'gap', 'price_to_sma_5', 'volume_change_1d']",0.10639209959689448,0.07982792504573098,-0.03292669596348974
+SFS + Random Forest,10,0.0,10,"['return_5d', 'intraday_return', 'high_low_range', 'gap', 'price_to_sma_5', 'rsi_14', 'roc_10', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10794200457001729,0.08035617548166221,-0.06324096458320483
+SFS + Random Forest,10,0.001,10,"['return_5d', 'intraday_return', 'high_low_range', 'gap', 'price_to_sma_5', 'rsi_14', 'roc_10', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10794200457001729,0.08035617548166223,-0.06324096458320483
+SFS + Random Forest,10,0.005,10,"['return_5d', 'intraday_return', 'high_low_range', 'gap', 'price_to_sma_5', 'rsi_14', 'roc_10', 'volatility_20', 'volume_change_1d', 'volume_ratio_20']",0.10794200457001729,0.08035617548166223,-0.06324096458320483
