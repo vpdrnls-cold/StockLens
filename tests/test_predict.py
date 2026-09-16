@@ -10,32 +10,27 @@ from src.models.predict import TrainedModel, feature_importance, predict, train_
 
 def _make_learnable_dataset(n: int = 400, seed: int = 0) -> pd.DataFrame:
     """Synthetic data where the target is a noisy linear function of
-    price_to_sma_5 and volatility_20, and the other 3 selected
-    features are pure noise. Learnable enough that a real model
+    price_to_sma_5 and volatility_20, and every other feature in
+    SELECTED_FEATURES is pure noise. Learnable enough that a real model
     should clearly beat a mean-only baseline, without requiring real
     market data.
+
+    Builds one noise column per current SELECTED_FEATURES entry (rather
+    than hardcoding a fixed handful of column names) so this test stays
+    valid regardless of how many features are currently selected.
     """
     rng = np.random.default_rng(seed)
 
-    price_to_sma_5 = rng.normal(0, 1, n)
-    price_to_sma_60 = rng.normal(0, 1, n)
-    macd_hist_pct = rng.normal(0, 1, n)
-    volatility_20 = rng.normal(0, 1, n)
-    atr_pct = rng.normal(0, 1, n)
+    data = {
+        feature: rng.normal(0, 1, n) for feature in SELECTED_FEATURES
+    }
 
     noise = rng.normal(0, 0.05, n)
-    target = 0.02 * price_to_sma_5 - 0.015 * volatility_20 + noise
+    target = 0.02 * data["price_to_sma_5"] - 0.015 * data["volatility_20"] + noise
 
-    return pd.DataFrame(
-        {
-            "price_to_sma_5": price_to_sma_5,
-            "price_to_sma_60": price_to_sma_60,
-            "macd_hist_pct": macd_hist_pct,
-            "volatility_20": volatility_20,
-            "atr_pct": atr_pct,
-            "target_return_5d": target,
-        }
-    )
+    data["target_return_5d"] = target
+
+    return pd.DataFrame(data)
 
 
 def _split(df: pd.DataFrame, train_frac: float = 0.7):

@@ -65,17 +65,55 @@ FEATURE_COLUMNS = (
 # atr_pct / macd_hist_pct are new). volatility_20 was already
 # scale-free (it's a return std, not a price level) and is kept.
 #
-# This has NOT yet been re-validated through Phase F's Filter /
-# Wrapper / Embedded comparison -- it is a direct, minimal swap
-# to unblock Phase G. Re-running Feature Selection on the corrected
-# feature set (with a cross-sectional-ranking-aware check, not just
-# pooled RMSE) is a follow-up, not optional polish.
-SELECTED_FEATURES = (
-    "price_to_sma_5",
-    "price_to_sma_60",
-    "macd_hist_pct",
-    "volatility_20",
-    "atr_pct",
+# UPDATE (post-hoc diagnosis, after the historical dataset was expanded
+# to the full 2002-2026 range): the 5-feature swap above was still never
+# re-validated through Filter/Wrapper/Embedded, and on the full data range
+# it showed essentially no ranking skill --
+#   pooled Spearman IC = -0.0062 (p=0.70, not significant)
+#   cross-sectional rank IC (mean over 697 test decision dates) = -0.0280
+#   %days with IC>0 = 43.62% (worse than a coin flip)
+#   ML-scored backtest on the untouched test period: -28.55% cumulative
+#   return vs. +24.08% for the rule-based momentum baseline.
+#
+# Per-feature standalone cross-sectional IC on the current data showed
+# several never-selected scale-free candidates (volatility_5, price_to_
+# sma_20, return_5d, rsi_14, return_10d/roc_10) ranking ABOVE price_to_
+# sma_5 and atr_pct -- direct evidence the 5-feature set was suboptimal,
+# not that the candidate pool itself lacks signal.
+#
+# INTERIM FIX (2026-09-16): widen SELECTED_FEATURES to every scale-free
+# candidate in FEATURE_COLUMNS (i.e. FEATURE_COLUMNS minus the 8 raw-
+# price/volume-scale columns: sma_5, sma_20, sma_60, macd, macd_signal,
+# macd_hist, atr_14, volume_sma_20). This was chosen by comparing
+# cross-sectional IC on the VALIDATION split only (never test, per
+# section 13 below) across several feature-set and hyperparameter
+# variants; default hyperparameters were already best. Validation xsec
+# IC improved +0.0179 -> +0.0289, and a single confirmatory test-period
+# run gave:
+#   ML-scored backtest: -28.55% -> +3.42% cumulative return,
+#   hit rate 51.95% -> 52.60%, max drawdown -43.32% -> -38.21%
+#   (rule-based baseline for reference: +24.08%, hit rate 50.00%).
+#
+# This is a brute-force widening, NOT a proper re-run of Filter/Wrapper/
+# Embedded feature selection with a cross-sectional-IC objective on the
+# corrected candidate pool -- that re-run is still the recommended
+# follow-up and may do better than "just use all 19". Also note the
+# strategy still underperforms the rule-based baseline, so this is an
+# improvement over a clear loss, not a finished, validated edge.
+SELECTED_FEATURES = tuple(
+    feature
+    for feature in FEATURE_COLUMNS
+    if feature
+    not in {
+        "sma_5",
+        "sma_20",
+        "sma_60",
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "atr_14",
+        "volume_sma_20",
+    }
 )
 
 
