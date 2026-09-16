@@ -4,4 +4,5 @@ numpy
 python-dotenv
 pydantic
 scikit-learn
+xgboost
 pytest

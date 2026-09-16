@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
 import logging
+import time
 from typing import Any, Mapping
 
 import requests
@@ -77,6 +78,19 @@ class KiwoomClient:
     _DAILY_CHART_PATH = "/api/dostk/chart"
     _JSON_CONTENT_TYPE = "application/json;charset=UTF-8"
 
+    # Kiwoom returns HTTP 429 (return_code=5, "허용된 요청 개수를
+    # 초과하였습니다") when a client sends requests faster than its
+    # per-endpoint rate limit. A single get_daily_chart() call can fire
+    # dozens of back-to-back continuation requests, which reliably hits
+    # this after ~12 pages with no pacing. _PAGE_REQUEST_INTERVAL_SECONDS
+    # paces continuation requests preemptively; _RATE_LIMIT_MAX_RETRIES /
+    # _RATE_LIMIT_BACKOFF_SECONDS are a safety net for when the limit is
+    # still hit anyway (e.g. another process sharing the same app key).
+    _PAGE_REQUEST_INTERVAL_SECONDS = 0.3
+    _RATE_LIMIT_STATUS_CODE = 429
+    _RATE_LIMIT_MAX_RETRIES = 5
+    _RATE_LIMIT_BACKOFF_SECONDS = 2.0
+
     def __init__(
         self,
         settings: KiwoomSettings,
@@ -102,7 +116,7 @@ class KiwoomClient:
             "appkey": self._settings.app_key,
             "secretkey": self._settings.secret_key,
         }
-        response = self._post(
+        response, _headers = self._post(
             self._TOKEN_PATH,
             payload,
             headers=self._json_headers(),
@@ -137,7 +151,7 @@ class KiwoomClient:
                 "next-key": "",
             }
         )
-        response = self._post(
+        response, _headers = self._post(
             self._STOCK_INFO_PATH,
             {"stk_cd": normalized_code},
             headers,
@@ -159,12 +173,28 @@ class KiwoomClient:
         base_date: str,
         *,
         adjusted_price_type: str = "1",
+        max_pages: int = 60,
     ) -> Mapping[str, Any]:
-        """Return the raw ``ka10081`` daily-chart response for one stock.
+        """Return the merged ``ka10081`` daily-chart history for one stock.
 
         ``base_date`` must use the ``YYYYMMDD`` format documented by Kiwoom.
         ``adjusted_price_type`` is the documented ``upd_stkpc_tp`` value: ``0``
         for unadjusted prices or ``1`` for adjusted prices.
+
+        A single ``ka10081`` call returns at most one page of bars (in
+        practice, roughly the most recent ~600 trading days before
+        ``base_date``). Kiwoom's documented continuation mechanism
+        (response headers ``cont-yn`` / ``next-key``, echoed back on the
+        next request) is how you page further into the past. This method
+        follows that continuation automatically and returns every page's
+        ``stk_dt_pole_chart_qry`` rows concatenated together, so callers
+        get full available history in one call instead of silently only
+        the most recent page.
+
+        ``max_pages`` is a safety bound (60 pages * ~600 rows/page is far
+        more than any of these five stocks' listed trading history), not
+        a tuning knob -- it exists so a server-side continuation bug
+        can't cause an unbounded loop.
         """
         normalized_code = stock_code.strip()
         if not normalized_code:
@@ -175,26 +205,78 @@ class KiwoomClient:
             raise ValueError("base_date must use YYYYMMDD format.") from error
         if adjusted_price_type not in {"0", "1"}:
             raise ValueError("adjusted_price_type must be '0' or '1'.")
+        if max_pages <= 0:
+            raise ValueError("max_pages must be positive.")
 
         token = self.authenticate()
-        headers = self._json_headers(
-            **{
-                "api-id": "ka10081",
-                "authorization": f"Bearer {token.value}",
-                "cont-yn": "N",
-                "next-key": "",
-            }
-        )
-        return self._post(
-            self._DAILY_CHART_PATH,
-            {
-                "stk_cd": normalized_code,
-                "base_dt": base_date,
-                "upd_stkpc_tp": adjusted_price_type,
-            },
-            headers,
-            stage="daily_chart",
-        )
+        payload = {
+            "stk_cd": normalized_code,
+            "base_dt": base_date,
+            "upd_stkpc_tp": adjusted_price_type,
+        }
+
+        all_rows: list[Any] = []
+        merged_response: dict[str, Any] | None = None
+        cont_yn = "N"
+        next_key = ""
+
+        for page in range(max_pages):
+            if page > 0:
+                time.sleep(self._PAGE_REQUEST_INTERVAL_SECONDS)
+
+            headers = self._json_headers(
+                **{
+                    "api-id": "ka10081",
+                    "authorization": f"Bearer {token.value}",
+                    "cont-yn": cont_yn,
+                    "next-key": next_key,
+                }
+            )
+
+            response, response_headers = self._post(
+                self._DAILY_CHART_PATH,
+                payload,
+                headers,
+                stage="daily_chart",
+            )
+
+            rows = response.get("stk_dt_pole_chart_qry", [])
+            if not isinstance(rows, list):
+                raise KiwoomTransportError(
+                    "stk_dt_pole_chart_qry must be a list."
+                )
+            all_rows.extend(rows)
+
+            if merged_response is None:
+                merged_response = dict(response)
+
+            logger.info(
+                "Kiwoom daily_chart page=%d stock=%s rows=%d cumulative=%d",
+                page + 1,
+                normalized_code,
+                len(rows),
+                len(all_rows),
+            )
+
+            cont_yn = str(response_headers.get("cont-yn", "N")).strip().upper()
+            next_key = str(response_headers.get("next-key", "")).strip()
+
+            if cont_yn != "Y" or not next_key or not rows:
+                break
+        else:
+            logger.warning(
+                "Kiwoom daily_chart stock=%s stopped at max_pages=%d "
+                "with continuation still available -- history may be "
+                "incomplete.",
+                normalized_code,
+                max_pages,
+            )
+
+        if merged_response is None:
+            merged_response = {"stk_cd": normalized_code}
+
+        merged_response["stk_dt_pole_chart_qry"] = all_rows
+        return merged_response
 
     def get_index_daily_chart(
         self,
@@ -225,7 +307,7 @@ class KiwoomClient:
             }
         )
 
-        return self._post(
+        response, _headers = self._post(
             self._DAILY_CHART_PATH,
             {
                 "inds_cd": normalized_code,
@@ -234,6 +316,7 @@ class KiwoomClient:
             headers,
             stage="index_daily_chart",
         )
+        return response
 
     def _json_headers(self, **headers: str) -> dict[str, str]:
         return {"Content-Type": self._JSON_CONTENT_TYPE, **headers}
@@ -257,7 +340,37 @@ class KiwoomClient:
         headers: Mapping[str, str],
         *,
         stage: str,
-    ) -> Mapping[str, Any]:
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+        delay = self._RATE_LIMIT_BACKOFF_SECONDS
+
+        for attempt in range(self._RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                return self._post_once(path, payload, headers, stage=stage)
+            except KiwoomAPIError as error:
+                is_rate_limited = error.status_code == self._RATE_LIMIT_STATUS_CODE
+                if not is_rate_limited or attempt == self._RATE_LIMIT_MAX_RETRIES:
+                    raise
+                logger.warning(
+                    "Kiwoom rate limit hit stage=%s attempt=%d/%d; "
+                    "retrying in %.1fs",
+                    stage,
+                    attempt + 1,
+                    self._RATE_LIMIT_MAX_RETRIES,
+                    delay,
+                )
+                time.sleep(delay)
+                delay *= 2
+
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _post_once(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+        headers: Mapping[str, str],
+        *,
+        stage: str,
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
         logger.info(
             "Kiwoom request stage=%s environment=%s endpoint=%s",
             stage,
@@ -297,7 +410,9 @@ class KiwoomClient:
             )
         if return_code not in (None, 0, "0"):
             raise KiwoomAPIError(return_message, return_code=return_code)
-        return response
+
+        response_headers = getattr(http_response, "headers", {}) or {}
+        return response, response_headers
 
 
 def _parse_int(value: Any) -> int | None:

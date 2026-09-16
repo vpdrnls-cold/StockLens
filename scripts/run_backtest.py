@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.backtest.baseline import BaselineConfig
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
 from src.ml.backtest import run_baseline_backtest
@@ -30,25 +31,24 @@ def main() -> None:
 
     dataset = build_combined_dataset(stock_bars)
 
-    dataset = build_combined_dataset(stock_bars)
-
     dataset["trade_date"] = pd.to_datetime(dataset["trade_date"])
 
-    # Backtest requires the closing price used for
-    # T -> T+5 return calculation.
-    close_prices = []
+    # Backtest requires open_price (T+1 entry) and close_price
+    # (T+holding_days exit) for the canonical backtest.
+    prices = []
 
     for stock_code, bars in stock_bars.items():
         for bar in bars:
-            close_prices.append(
+            prices.append(
                 {
                     "trade_date": pd.Timestamp(bar.trade_date),
                     "stock_code": stock_code,
+                    "open_price": float(bar.open_price),
                     "close_price": float(bar.close_price),
                 }
             )
 
-    price_df = pd.DataFrame(close_prices)
+    price_df = pd.DataFrame(prices)
 
     dataset = dataset.merge(
         price_df,
@@ -66,11 +66,19 @@ def main() -> None:
         f"{splits.test['trade_date'].max()}"
     )
 
+    config = BaselineConfig(
+        lookback_days=5,
+        holding_days=5,
+        buy_fee=0.00015,
+        sell_fee=0.00015,
+        sell_tax=0.0020,
+        buy_slippage=0.0010,
+        sell_slippage=0.0010,
+    )
+
     result = run_baseline_backtest(
         splits.test,
-        holding_period=5,
-        transaction_cost=0.0,
-        slippage=0.0,
+        config=config,
     )
 
     print()

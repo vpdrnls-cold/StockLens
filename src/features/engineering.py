@@ -33,9 +33,49 @@ FEATURE_COLUMNS = (
     "volatility_5",
     "volatility_20",
     "atr_14",
+    "atr_pct",
+    "macd_hist_pct",
     "volume_change_1d",
     "volume_sma_20",
     "volume_ratio_20",
+)
+
+# Phase F (Feature Selection) result -- SUPERSEDED, see note below.
+#
+# Original winner: RFE + XGBoost, RMSE=0.100359 on validation
+# (baseline mean-predictor RMSE=0.105132), features =
+# [sma_5, sma_60, macd_hist, volatility_20, atr_14].
+#
+# BUG (found running the Phase G ML-scored backtest on the test
+# period): sma_5, sma_60, atr_14, and macd_hist are all raw-price-
+# scale quantities, not normalized by each stock's price level. A
+# pooled-regression RMSE across 5 stocks can improve from a feature
+# like this purely by explaining between-stock differences (a stock
+# with a structurally higher price also tends to have a higher
+# sma_60/atr_14/macd_hist), which is a different thing from
+# predicting which stock will do best on a given day. In the ML
+# backtest this showed up concretely: the model selected the same
+# stock (005380, the highest-priced of the five) on every single
+# decision date regardless of actual date-specific conditions --
+# it had learned "large absolute feature values" as a proxy for
+# stock identity, not real time-varying signal.
+#
+# Fix: swap the raw-price-scale features for their scale-free
+# equivalents (price_to_sma_* was already in FEATURE_COLUMNS;
+# atr_pct / macd_hist_pct are new). volatility_20 was already
+# scale-free (it's a return std, not a price level) and is kept.
+#
+# This has NOT yet been re-validated through Phase F's Filter /
+# Wrapper / Embedded comparison -- it is a direct, minimal swap
+# to unblock Phase G. Re-running Feature Selection on the corrected
+# feature set (with a cross-sectional-ranking-aware check, not just
+# pooled RMSE) is a follow-up, not optional polish.
+SELECTED_FEATURES = (
+    "price_to_sma_5",
+    "price_to_sma_60",
+    "macd_hist_pct",
+    "volatility_20",
+    "atr_pct",
 )
 
 
@@ -214,6 +254,17 @@ def build_features(bars: Sequence[DailyBar]) -> pd.DataFrame:
         adjust=False,
         min_periods=14,
     ).mean()
+
+    # atr_14 is in raw price units, which makes it incomparable across
+    # stocks at different price levels (see SELECTED_FEATURES note
+    # below). atr_pct is the scale-free version used for cross-
+    # sectional comparison.
+    features["atr_pct"] = features["atr_14"] / close
+
+    # Same issue for macd_hist: EMA12-EMA26 is a raw-price-scale
+    # quantity, not comparable across stocks with different price
+    # levels.
+    features["macd_hist_pct"] = features["macd_hist"] / close
 
     # ---------------------------------------------------------
     # 5. Volume

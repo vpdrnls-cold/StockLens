@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 import json
 
 import pandas as pd
@@ -201,6 +202,7 @@ def calculate_net_return(
 def run_baseline_backtest(
     data_by_stock: dict[str, pd.DataFrame],
     config: BaselineConfig | None = None,
+    score_fn: Callable[[pd.DataFrame, str, int, int], float] = calculate_score,
 ) -> list[Trade]:
     """
     Run the rule-based baseline backtest.
@@ -209,7 +211,12 @@ def run_baseline_backtest(
         T-day after close / 15:30
 
     Score:
-        5-day return ending at T
+        ``score_fn(universe, stock_code, decision_index, lookback_days)``.
+        Defaults to ``calculate_score`` (5-day momentum ending at T).
+        Pass a different ``score_fn`` (e.g. one backed by model
+        predictions) to reuse this same execution engine -- entry/exit
+        timing, fees, tax, slippage -- for a different stock-picking
+        rule.
 
     Entry:
         T+1 open
@@ -263,7 +270,7 @@ def run_baseline_backtest(
         decision_date = universe.iloc[decision_index]["trade_date"]
 
         scores = {
-            stock_code: calculate_score(
+            stock_code: score_fn(
                 universe,
                 stock_code,
                 decision_index,

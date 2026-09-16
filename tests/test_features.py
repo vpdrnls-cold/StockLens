@@ -59,7 +59,7 @@ def _replace_bar(
     )
 
 
-def test_build_features_returns_25_features() -> None:
+def test_build_features_returns_all_registered_features() -> None:
     bars = _make_bars()
 
     result = build_features(bars)
@@ -68,7 +68,53 @@ def test_build_features_returns_25_features() -> None:
         "trade_date",
         *FEATURE_COLUMNS,
     ]
-    assert len(FEATURE_COLUMNS) == 25
+    assert len(FEATURE_COLUMNS) == 27
+
+
+def test_atr_pct_and_macd_hist_pct_are_price_normalized() -> None:
+    """atr_14 and macd_hist are raw price-scale quantities and are not
+    comparable across stocks at different price levels. atr_pct and
+    macd_hist_pct divide by close price so the same underlying pattern
+    produces the same feature value regardless of the stock's price
+    level -- this is what makes them safe for cross-sectional
+    (same-day, across-stock) comparison."""
+
+    bars = _make_bars()
+    scaled_bars = [
+        DailyBar(
+            stock_code=bar.stock_code,
+            trade_date=bar.trade_date,
+            open_price=bar.open_price * 1000.0,
+            high_price=bar.high_price * 1000.0,
+            low_price=bar.low_price * 1000.0,
+            close_price=bar.close_price * 1000.0,
+            volume=bar.volume,
+            trade_value_million_krw=bar.trade_value_million_krw,
+            previous_close_change=bar.previous_close_change,
+            previous_close_change_sign=bar.previous_close_change_sign,
+            turnover_rate=bar.turnover_rate,
+        )
+        for bar in bars
+    ]
+
+    result = build_features(bars)
+    scaled_result = build_features(scaled_bars)
+
+    last = result.iloc[-1]
+    scaled_last = scaled_result.iloc[-1]
+
+    # Raw price-scale features blow up under the 1000x price scaling.
+    assert scaled_last["atr_14"] == pytest.approx(
+        last["atr_14"] * 1000.0, rel=1e-6
+    )
+
+    # Normalized features are (approximately) invariant to price scale.
+    assert scaled_last["atr_pct"] == pytest.approx(
+        last["atr_pct"], rel=1e-6
+    )
+    assert scaled_last["macd_hist_pct"] == pytest.approx(
+        last["macd_hist_pct"], rel=1e-6
+    )
 
 
 def test_features_are_sorted_by_trade_date() -> None:

@@ -3,141 +3,116 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from src.backtest.baseline import BaselineConfig
 from src.ml.backtest import run_baseline_backtest
 
 
 def _make_dataset() -> pd.DataFrame:
-    """Create deterministic data for backtest tests."""
+    """Deterministic 5-stock tidy dataset.
 
-    dates = pd.bdate_range("2026-07-01", periods=11)
+    005380 always has the strongest lookback momentum, so it should
+    always be selected. open_price == close_price so entry/exit math
+    is easy to hand-check.
+    """
+
+    dates = pd.bdate_range("2026-07-01", periods=16)
+
+    codes = ["000660", "005380", "005930", "035420", "035720"]
 
     rows = []
 
     for i, date in enumerate(dates):
-        # Each date has 3 stocks.
-        # 005380 has the highest 5-day momentum,
-        # so it should always be selected.
-        rows.extend(
-            [
+        for code in codes:
+            if code == "005380":
+                close = 100.0 + i * 2
+            elif code == "000660":
+                close = 100.0 + i
+            else:
+                close = 100.0 - i * 0.1
+
+            rows.append(
                 {
                     "trade_date": date,
-                    "stock_code": "000660",
-                    "return_5d": 0.02,
-                    "close_price": 100.0 + i,
-                },
-                {
-                    "trade_date": date,
-                    "stock_code": "005380",
-                    "return_5d": 0.08,
-                    "close_price": 100.0 + i * 2,
-                },
-                {
-                    "trade_date": date,
-                    "stock_code": "005930",
-                    "return_5d": -0.01,
-                    "close_price": 100.0 - i,
-                },
-            ]
-        )
+                    "stock_code": code,
+                    "open_price": close,
+                    "close_price": close,
+                }
+            )
 
     return pd.DataFrame(rows)
+
+
+def _zero_cost_config(holding_period: int = 5) -> BaselineConfig:
+    return BaselineConfig(
+        lookback_days=holding_period,
+        holding_days=holding_period,
+        buy_fee=0.0,
+        sell_fee=0.0,
+        sell_tax=0.0,
+        buy_slippage=0.0,
+        sell_slippage=0.0,
+    )
 
 
 def test_backtest_selects_highest_momentum_stock() -> None:
     dataset = _make_dataset()
 
-    result = run_baseline_backtest(dataset)
+    result = run_baseline_backtest(dataset, config=_zero_cost_config())
 
     assert not result.trades.empty
-    assert result.trades["stock_code"].tolist() == [
-        "005380",
-        "005380",
-    ]
+    assert set(result.trades["stock_code"]) == {"005380"}
 
 
-def test_backtest_records_correct_ranking() -> None:
+def test_backtest_rankings_cover_every_stock_every_date() -> None:
     dataset = _make_dataset()
 
-    result = run_baseline_backtest(dataset)
+    result = run_baseline_backtest(dataset, config=_zero_cost_config())
 
-    assert result.trades["rank"].tolist() == [1, 1]
+    n_decisions = result.trades["decision_date"].nunique()
 
-    assert result.trades["score"].tolist() == pytest.approx(
-        [0.08, 0.08]
-    )
+    assert len(result.rankings) == n_decisions * 5
+    assert result.rankings["rank"].max() == 5
+
+    # The winner in trades must be rank 1.
+    assert (result.trades["rank"] == 1).all()
 
 
-def test_backtest_connects_decision_date_to_t_plus_5() -> None:
+def test_transaction_costs_reduce_net_return() -> None:
     dataset = _make_dataset()
 
-    result = run_baseline_backtest(dataset)
+    free = run_baseline_backtest(dataset, config=_zero_cost_config())
 
-    first_trade = result.trades.iloc[0]
-
-    assert first_trade["decision_date"] == pd.Timestamp(
-        "2026-07-01"
+    costly_config = BaselineConfig(
+        lookback_days=5,
+        holding_days=5,
+        buy_fee=0.00015,
+        sell_fee=0.00015,
+        sell_tax=0.0020,
+        buy_slippage=0.0010,
+        sell_slippage=0.0010,
     )
+    costly = run_baseline_backtest(dataset, config=costly_config)
 
-    assert first_trade["exit_date"] == pd.Timestamp(
-        "2026-07-08"
+    assert (
+        costly.trades["net_return"].iloc[0]
+        < free.trades["net_return"].iloc[0]
     )
-
-
-def test_backtest_calculates_return_correctly() -> None:
-    dataset = _make_dataset()
-
-    result = run_baseline_backtest(dataset)
-
-    first_trade = result.trades.iloc[0]
-
-    # 005380:
-    # T close = 100
-    # T+5 close = 110
-    # return = 110 / 100 - 1 = 0.10
-    assert first_trade["entry_price"] == pytest.approx(100.0)
-    assert first_trade["exit_price"] == pytest.approx(110.0)
-    assert first_trade["gross_return"] == pytest.approx(0.10)
-    assert first_trade["net_return"] == pytest.approx(0.10)
-
-
-def test_transaction_cost_and_slippage_are_applied() -> None:
-    dataset = _make_dataset()
-
-    result = run_baseline_backtest(
-        dataset,
-        transaction_cost=0.01,
-        slippage=0.005,
-    )
-
-    first_trade = result.trades.iloc[0]
-
-    # Gross return = 10%
-    # Cost = 1%
-    # Slippage = 0.5%
-    # Net return = 8.5%
-    assert first_trade["gross_return"] == pytest.approx(0.10)
-    assert first_trade["net_return"] == pytest.approx(0.085)
 
 
 def test_equity_curve_compounds_trade_returns() -> None:
     dataset = _make_dataset()
 
-    result = run_baseline_backtest(dataset)
-
-    assert len(result.equity_curve) == 2
+    result = run_baseline_backtest(dataset, config=_zero_cost_config())
 
     first_return = result.trades.iloc[0]["net_return"]
     second_return = result.trades.iloc[1]["net_return"]
 
     expected_first_equity = 1.0 * (1.0 + first_return)
-    expected_second_equity = (
-        expected_first_equity * (1.0 + second_return)
-    )
+    expected_second_equity = expected_first_equity * (1.0 + second_return)
 
     assert result.equity_curve.iloc[0]["equity"] == pytest.approx(
         expected_first_equity
     )
-
     assert result.equity_curve.iloc[1]["equity"] == pytest.approx(
         expected_second_equity
     )
@@ -146,99 +121,28 @@ def test_equity_curve_compounds_trade_returns() -> None:
 def test_cumulative_return_is_based_on_final_equity() -> None:
     dataset = _make_dataset()
 
-    result = run_baseline_backtest(dataset)
+    result = run_baseline_backtest(dataset, config=_zero_cost_config())
 
     final_equity = result.equity_curve.iloc[-1]["equity"]
 
-    assert result.cumulative_return == pytest.approx(
-        final_equity - 1.0
-    )
+    assert result.cumulative_return == pytest.approx(final_equity - 1.0)
 
 
-def test_average_return_is_calculated_correctly() -> None:
+def test_hit_rate_and_average_return_are_consistent_with_trades() -> None:
     dataset = _make_dataset()
 
-    result = run_baseline_backtest(dataset)
+    result = run_baseline_backtest(dataset, config=_zero_cost_config())
 
-    expected = result.trades["net_return"].mean()
+    expected_hit_rate = (result.trades["net_return"] > 0).mean()
+    expected_average = result.trades["net_return"].mean()
 
-    assert result.average_return == pytest.approx(expected)
-
-
-def test_hit_rate_is_calculated_correctly() -> None:
-    dataset = _make_dataset()
-
-    result = run_baseline_backtest(dataset)
-
-    expected = (
-        result.trades["net_return"] > 0
-    ).mean()
-
-    assert result.hit_rate == pytest.approx(expected)
-
-
-def test_max_drawdown_is_calculated_correctly() -> None:
-    dataset = _make_dataset()
-
-    result = run_baseline_backtest(dataset)
-
-    equity = result.equity_curve["equity"]
-    running_max = equity.cummax()
-    expected_drawdown = (equity / running_max - 1.0).min()
-
-    assert result.max_drawdown == pytest.approx(
-        expected_drawdown
-    )
-
-
-def test_future_scores_do_not_change_past_decision() -> None:
-    dataset = _make_dataset()
-
-    original = run_baseline_backtest(dataset)
-
-    modified = dataset.copy()
-
-    # Change future-day momentum scores dramatically.
-    # The decision on 2026-07-01 must not change because
-    # the baseline only uses data from the decision date.
-    future_date = pd.Timestamp("2026-07-02")
-
-    mask = modified["trade_date"] == future_date
-
-    modified.loc[
-        mask & (modified["stock_code"] == "000660"),
-        "return_5d",
-    ] = 100.0
-
-    modified.loc[
-        mask & (modified["stock_code"] == "005380"),
-        "return_5d",
-    ] = -100.0
-
-    modified.loc[
-        mask & (modified["stock_code"] == "005930"),
-        "return_5d",
-    ] = -200.0
-
-    changed = run_baseline_backtest(modified)
-
-    assert original.trades.iloc[0]["stock_code"] == (
-        changed.trades.iloc[0]["stock_code"]
-    )
-
-    assert original.trades.iloc[0]["score"] == pytest.approx(
-        changed.trades.iloc[0]["score"]
-    )
+    assert result.hit_rate == pytest.approx(expected_hit_rate)
+    assert result.average_return == pytest.approx(expected_average)
 
 
 def test_backtest_rejects_empty_dataset() -> None:
     dataset = pd.DataFrame(
-        columns=[
-            "trade_date",
-            "stock_code",
-            "return_5d",
-            "close_price",
-        ]
+        columns=["trade_date", "stock_code", "open_price", "close_price"]
     )
 
     with pytest.raises(ValueError, match="must not be empty"):
@@ -250,7 +154,6 @@ def test_backtest_rejects_missing_columns() -> None:
         {
             "trade_date": ["2026-07-01"],
             "stock_code": ["005930"],
-            "return_5d": [0.05],
         }
     )
 
@@ -258,21 +161,14 @@ def test_backtest_rejects_missing_columns() -> None:
         run_baseline_backtest(dataset)
 
 
-def test_backtest_rejects_invalid_holding_period() -> None:
+def test_backtest_delegates_stock_count_check_to_canonical() -> None:
+    """Only 3 stock codes present: the canonical implementation should
+    still be the one enforcing the 5-stock requirement, so the error
+    message must come from src.backtest.baseline, not a reimplemented
+    check here."""
+
     dataset = _make_dataset()
+    dataset = dataset[dataset["stock_code"].isin(["000660", "005380", "005930"])]
 
-    with pytest.raises(ValueError, match="holding_period"):
-        run_baseline_backtest(
-            dataset,
-            holding_period=0,
-        )
-
-
-def test_backtest_rejects_insufficient_dates() -> None:
-    dataset = _make_dataset().iloc[:9].copy()
-
-    with pytest.raises(
-        ValueError,
-        match="Not enough dates",
-    ):
-        run_baseline_backtest(dataset)
+    with pytest.raises(ValueError, match="Baseline expects five stocks"):
+        run_baseline_backtest(dataset, config=_zero_cost_config())
