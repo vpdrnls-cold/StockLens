@@ -25,7 +25,14 @@ class BaselineConfig:
 
 @dataclass(frozen=True)
 class Trade:
-    """One completed baseline trade."""
+    """One completed baseline trade.
+
+    ``weight`` is the fraction of capital allocated to this trade for
+    its holding period. Single-winner-takes-all backtests (top_n=1)
+    always have weight=1.0; diversified backtests (top_n>1) split
+    capital equally across the top_n picks for that decision date, so
+    weight=1/top_n for each.
+    """
 
     decision_date: pd.Timestamp
     stock_code: str
@@ -40,6 +47,8 @@ class Trade:
 
     gross_return: float
     net_return: float
+
+    weight: float = 1.0
 
 
 def load_historical_data(path: str | Path) -> pd.DataFrame:
@@ -203,6 +212,7 @@ def run_baseline_backtest(
     data_by_stock: dict[str, pd.DataFrame],
     config: BaselineConfig | None = None,
     score_fn: Callable[[pd.DataFrame, str, int, int], float] = calculate_score,
+    top_n: int = 1,
 ) -> list[Trade]:
     """
     Run the rule-based baseline backtest.
@@ -226,6 +236,15 @@ def run_baseline_backtest(
 
     Rebalance:
         Every 5 trading days
+
+    Allocation:
+        ``top_n=1`` (default) goes all-in on the single highest-scored
+        stock, as before. ``top_n>1`` equal-weights the top ``top_n``
+        scored stocks (1/top_n capital each) for that decision date --
+        one Trade per stock, each carrying its ``weight``. Use
+        ``calculate_performance`` to combine same-date trades into a
+        single portfolio-level return per period; treating each Trade
+        as its own period would double-count capital.
     """
 
     config = config or BaselineConfig()
@@ -235,6 +254,11 @@ def run_baseline_backtest(
     if len(stock_codes) != 5:
         raise ValueError(
             f"Baseline expects five stocks, got {len(stock_codes)}."
+        )
+
+    if not (1 <= top_n <= len(stock_codes)):
+        raise ValueError(
+            f"top_n must be between 1 and {len(stock_codes)}, got {top_n}."
         )
 
     universe = prepare_universe(data_by_stock)
@@ -262,6 +286,8 @@ def run_baseline_backtest(
         len(universe) - config.holding_days - 1
     )
 
+    weight = 1.0 / top_n
+
     for decision_index in range(
         first_decision_index,
         last_decision_index + 1,
@@ -279,7 +305,9 @@ def run_baseline_backtest(
             for stock_code in stock_codes
         }
 
-        selected_stock = max(scores, key=scores.get)
+        selected_stocks = sorted(
+            scores, key=scores.get, reverse=True
+        )[:top_n]
 
         entry_index = decision_index + 1
         exit_index = decision_index + config.holding_days
@@ -287,38 +315,40 @@ def run_baseline_backtest(
         entry_date = universe.iloc[entry_index]["trade_date"]
         exit_date = universe.iloc[exit_index]["trade_date"]
 
-        entry_price = float(
-            universe.iloc[entry_index][f"open_{selected_stock}"]
-        )
-
-        exit_price = float(
-            universe.iloc[exit_index][f"close_{selected_stock}"]
-        )
-
-        if entry_price <= 0 or exit_price <= 0:
-            raise ValueError(
-                f"Invalid entry/exit price for {selected_stock}"
+        for selected_stock in selected_stocks:
+            entry_price = float(
+                universe.iloc[entry_index][f"open_{selected_stock}"]
             )
 
-        gross_return, net_return = calculate_net_return(
-            entry_price,
-            exit_price,
-            config,
-        )
-
-        trades.append(
-            Trade(
-                decision_date=decision_date,
-                stock_code=selected_stock,
-                score=scores[selected_stock],
-                entry_date=entry_date,
-                entry_price=entry_price,
-                exit_date=exit_date,
-                exit_price=exit_price,
-                gross_return=gross_return,
-                net_return=net_return,
+            exit_price = float(
+                universe.iloc[exit_index][f"close_{selected_stock}"]
             )
-        )
+
+            if entry_price <= 0 or exit_price <= 0:
+                raise ValueError(
+                    f"Invalid entry/exit price for {selected_stock}"
+                )
+
+            gross_return, net_return = calculate_net_return(
+                entry_price,
+                exit_price,
+                config,
+            )
+
+            trades.append(
+                Trade(
+                    decision_date=decision_date,
+                    stock_code=selected_stock,
+                    score=scores[selected_stock],
+                    entry_date=entry_date,
+                    entry_price=entry_price,
+                    exit_date=exit_date,
+                    exit_price=exit_price,
+                    gross_return=gross_return,
+                    net_return=net_return,
+                    weight=weight,
+                )
+            )
 
     return trades
 
@@ -338,6 +368,7 @@ def trades_to_dataframe(trades: list[Trade]) -> pd.DataFrame:
                 "exit_price",
                 "gross_return",
                 "net_return",
+                "weight",
             ]
         )
 
@@ -353,6 +384,7 @@ def trades_to_dataframe(trades: list[Trade]) -> pd.DataFrame:
                 "exit_price": trade.exit_price,
                 "gross_return": trade.gross_return,
                 "net_return": trade.net_return,
+                "weight": trade.weight,
             }
             for trade in trades
         ]
@@ -363,7 +395,17 @@ def calculate_performance(
     trades: list[Trade],
     initial_capital: float = 10_000_000.0,
 ) -> dict[str, float]:
-    """Calculate basic baseline performance metrics."""
+    """Calculate basic baseline performance metrics.
+
+    Trades are grouped by ``decision_date`` first, and each period's
+    portfolio return is the weight-averaged net_return of that
+    period's trades (weights sum to 1.0 within a period by
+    construction -- see ``run_baseline_backtest``). Equity compounds
+    once per period, not once per individual trade -- with
+    ``top_n>1`` a single period holds multiple simultaneous
+    positions, and treating each as its own compounding step would
+    double- (or triple-, or ...-) count capital.
+    """
 
     if initial_capital <= 0:
         raise ValueError("Initial capital must be positive.")
@@ -371,24 +413,32 @@ def calculate_performance(
     if not trades:
         return {
             "trade_count": 0.0,
+            "period_count": 0.0,
             "total_return": 0.0,
             "win_rate": 0.0,
             "average_trade_return": 0.0,
             "max_drawdown": 0.0,
         }
 
-    returns = pd.Series(
-        [trade.net_return for trade in trades],
-        dtype=float,
+    trades_df = trades_to_dataframe(trades)
+
+    period_returns = (
+        trades_df.groupby("decision_date")
+        .apply(
+            lambda group: float(
+                (group["weight"] * group["net_return"]).sum()
+            )
+        )
+        .sort_index()
     )
 
-    equity = initial_capital * (1.0 + returns).cumprod()
+    equity = initial_capital * (1.0 + period_returns).cumprod()
 
     total_return = float(equity.iloc[-1] / initial_capital - 1.0)
 
-    win_rate = float((returns > 0).mean())
+    win_rate = float((period_returns > 0).mean())
 
-    average_trade_return = float(returns.mean())
+    average_trade_return = float(period_returns.mean())
 
     running_max = equity.cummax()
     drawdown = equity / running_max - 1.0
@@ -396,6 +446,7 @@ def calculate_performance(
 
     return {
         "trade_count": float(len(trades)),
+        "period_count": float(len(period_returns)),
         "total_return": total_return,
         "win_rate": win_rate,
         "average_trade_return": average_trade_return,

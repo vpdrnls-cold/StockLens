@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+import logging
 from typing import Any, Mapping, Sequence
 
 from src.data.models import DailyBar
 
 
+logger = logging.getLogger(__name__)
+
 DAILY_CHART_ROWS_KEY = "stk_dt_pole_chart_qry"
+
+# Kiwoom documents pred_pre_sig (previous_close_change_sign) as one of
+# 1 (upper limit), 2 (up), 3 (unchanged), 4 (lower limit), 5 (down).
+# In practice, multi-decade history includes reference-price-reset
+# events (stock splits, rights issues) where Kiwoom returns values
+# outside this documented set. This field is metadata only -- nothing
+# in feature engineering, target construction, or the backtest reads
+# it, all of which compute returns directly from close_price -- so an
+# undocumented value here should not discard otherwise-valid OHLCV
+# data. See _DOCUMENTED_CHANGE_SIGNS usage in validate_daily_bars.
+_DOCUMENTED_CHANGE_SIGNS = {1, 2, 3, 4, 5}
 
 
 class HistoricalDataValidationError(ValueError):
@@ -63,9 +77,15 @@ def validate_daily_bars(bars: Sequence[DailyBar]) -> None:
             raise HistoricalDataValidationError(
                 f"Turnover rate must not be negative on {bar.trade_date.isoformat()}."
             )
-        if bar.previous_close_change_sign not in {1, 2, 3, 4, 5}:
-            raise HistoricalDataValidationError(
-                f"Invalid previous-close change sign on {bar.trade_date.isoformat()}."
+        if bar.previous_close_change_sign not in _DOCUMENTED_CHANGE_SIGNS:
+            logger.warning(
+                "Undocumented previous-close change sign %r for %s on %s "
+                "(likely a reference-price reset event, e.g. a stock "
+                "split). Keeping the bar -- this field is metadata only "
+                "and unused downstream.",
+                bar.previous_close_change_sign,
+                bar.stock_code,
+                bar.trade_date.isoformat(),
             )
 
 

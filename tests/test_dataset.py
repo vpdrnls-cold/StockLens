@@ -203,24 +203,35 @@ def test_build_combined_dataset_has_expected_columns() -> None:
 
     assert list(dataset.columns) == expected_columns
 
-    def test_split_by_time_uses_expected_date_ranges() -> None:
-        stock_bars = {
-            "000660": _make_bars(stock_code="000660", count=650),
-            "005930": _make_bars(stock_code="005930", count=650),
-        }
+def test_split_by_time_uses_expected_date_ranges() -> None:
+    stock_bars = {
+        "000660": _make_bars(stock_code="000660", count=650),
+        "005930": _make_bars(stock_code="005930", count=650),
+    }
 
-        dataset = build_combined_dataset(stock_bars)
+    dataset = build_combined_dataset(stock_bars)
 
-        splits = split_by_time(dataset)
+    # Explicit boundaries, independent of production's TRAIN_START_DATE
+    # etc. constants -- this test should still pass no matter how the
+    # real split dates get adjusted later.
+    splits = split_by_time(
+        dataset,
+        train_start="2026-04-01",
+        train_end="2027-06-30",
+        validation_start="2027-07-01",
+        validation_end="2027-12-31",
+        test_start="2028-01-01",
+        test_end="2028-06-20",
+    )
 
-        assert splits.train["trade_date"].min() >= "2024-03-13"
-        assert splits.train["trade_date"].max() <= "2025-12-31"
+    assert splits.train["trade_date"].min() >= "2026-04-01"
+    assert splits.train["trade_date"].max() <= "2027-06-30"
 
-        assert splits.validation["trade_date"].min() >= "2026-01-01"
-        assert splits.validation["trade_date"].max() <= "2026-06-30"
+    assert splits.validation["trade_date"].min() >= "2027-07-01"
+    assert splits.validation["trade_date"].max() <= "2027-12-31"
 
-        assert splits.test["trade_date"].min() >= "2026-07-01"
-        assert splits.test["trade_date"].max() <= "2026-09-01"
+    assert splits.test["trade_date"].min() >= "2028-01-01"
+    assert splits.test["trade_date"].max() <= "2028-06-20"
 
 
     def test_split_by_time_has_no_date_overlap() -> None:

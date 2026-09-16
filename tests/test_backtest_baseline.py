@@ -155,3 +155,95 @@ def test_rebalance_every_five_trading_days():
         assert (
             current.decision_date - previous.decision_date
         ).days >= 5
+
+
+def test_top_n_diversification_picks_multiple_stocks_with_equal_weight():
+    stock_a = make_stock_data(
+        "A",
+        [100, 100, 100, 100, 100, 130, 130, 130, 130, 130, 130, 130],
+    )
+    stock_b = make_stock_data(
+        "B",
+        [100, 100, 100, 100, 100, 120, 120, 120, 120, 120, 120, 120],
+    )
+    stock_c = make_stock_data(
+        "C",
+        [100, 100, 100, 100, 100, 110, 110, 110, 110, 110, 110, 110],
+    )
+    stock_d = make_stock_data("D", [100] * 12)
+    stock_e = make_stock_data("E", [100] * 12)
+
+    data = {"A": stock_a, "B": stock_b, "C": stock_c, "D": stock_d, "E": stock_e}
+
+    trades = run_baseline_backtest(
+        data,
+        BaselineConfig(
+            buy_fee=0.0, sell_fee=0.0, sell_tax=0.0,
+            buy_slippage=0.0, sell_slippage=0.0,
+        ),
+        top_n=3,
+    )
+
+    first_period = [t for t in trades if t.decision_date == trades[0].decision_date]
+
+    assert {t.stock_code for t in first_period} == {"A", "B", "C"}
+    assert all(t.weight == pytest.approx(1 / 3) for t in first_period)
+
+
+def test_top_n_one_matches_previous_single_winner_behavior():
+    stock_a = make_stock_data(
+        "A", [100, 100, 100, 100, 100, 130, 130, 130, 130, 130, 130, 130]
+    )
+    stock_b = make_stock_data("B", [100] * 12)
+    stock_c = make_stock_data("C", [100] * 12)
+    stock_d = make_stock_data("D", [100] * 12)
+    stock_e = make_stock_data("E", [100] * 12)
+
+    data = {"A": stock_a, "B": stock_b, "C": stock_c, "D": stock_d, "E": stock_e}
+    config = BaselineConfig(
+        buy_fee=0.0, sell_fee=0.0, sell_tax=0.0,
+        buy_slippage=0.0, sell_slippage=0.0,
+    )
+
+    default_trades = run_baseline_backtest(data, config)
+    explicit_trades = run_baseline_backtest(data, config, top_n=1)
+
+    assert len(default_trades) == len(explicit_trades) == 1
+    assert default_trades[0].weight == 1.0
+    assert explicit_trades[0].stock_code == "A"
+
+
+def test_top_n_rejects_out_of_range_values():
+    stocks = {
+        code: make_stock_data(code, [100 + i for i in range(20)])
+        for code in ["A", "B", "C", "D", "E"]
+    }
+
+    with pytest.raises(ValueError, match="top_n must be between"):
+        run_baseline_backtest(stocks, top_n=0)
+
+    with pytest.raises(ValueError, match="top_n must be between"):
+        run_baseline_backtest(stocks, top_n=6)
+
+
+def test_calculate_performance_aggregates_same_period_trades():
+    from src.backtest.baseline import Trade, calculate_performance
+
+    date = pd.Timestamp("2026-01-08")
+    entry = pd.Timestamp("2026-01-09")
+    exit_ = pd.Timestamp("2026-01-15")
+
+    # One period, two simultaneous half-weight positions: +10% and -4%.
+    # Portfolio return should be 0.5*0.10 + 0.5*(-0.04) = 0.03, as ONE
+    # compounding step -- not two separate steps.
+    trades = [
+        Trade(date, "A", 0.1, entry, 100.0, exit_, 110.0, 0.10, 0.10, weight=0.5),
+        Trade(date, "B", 0.05, entry, 100.0, exit_, 96.0, -0.04, -0.04, weight=0.5),
+    ]
+
+    perf = calculate_performance(trades, initial_capital=1_000_000.0)
+
+    assert perf["period_count"] == 1
+    assert perf["trade_count"] == 2
+    assert perf["total_return"] == pytest.approx(0.03)
+    assert perf["win_rate"] == pytest.approx(1.0)

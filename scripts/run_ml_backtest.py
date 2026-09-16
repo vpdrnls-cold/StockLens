@@ -51,6 +51,14 @@ CONFIG = BaselineConfig(
     sell_slippage=0.0010,
 )
 
+# All-in on the single top pick (top_n=1) concentrates 100% of capital
+# in one prediction/momentum score being right. TOP_N>1 equal-weights
+# the top N picks each period instead, trading away some upside for
+# materially less single-stock blowup risk. Both the momentum baseline
+# and the ML strategy use the same TOP_N so the comparison stays
+# apples-to-apples.
+TOP_N = 2
+
 
 def _load_priced_dataset() -> pd.DataFrame:
     storage = HistoricalStorage("data")
@@ -97,7 +105,8 @@ def _print_performance(label: str, trades: list, initial_capital: float = 10_000
     perf = calculate_performance(trades, initial_capital=initial_capital)
 
     print(f"--- {label} ---")
-    print(f"Trades:             {int(perf['trade_count'])}")
+    print(f"Rebalance periods:  {int(perf['period_count'])}")
+    print(f"Positions opened:   {int(perf['trade_count'])}")
     print(f"Cumulative Return:  {perf['total_return']:.4%}")
     print(f"Average Return:     {perf['average_trade_return']:.4%}")
     print(f"Hit Rate:           {perf['win_rate']:.4%}")
@@ -129,17 +138,20 @@ def main() -> None:
 
     data_by_stock = _to_data_by_stock(splits.test)
 
+    print(f"=== Diversification: top_n={TOP_N} (equal-weight) ===")
+    print()
+
     # Rule-based momentum baseline (calculate_score is the default
     # score_fn; passed explicitly here just for clarity).
     baseline_trades = run_baseline_backtest(
-        data_by_stock, config=CONFIG, score_fn=calculate_score
+        data_by_stock, config=CONFIG, score_fn=calculate_score, top_n=TOP_N
     )
 
     # ML-scored strategy: same engine, predictions instead of momentum.
     predictions = predictions_for_dataset(trained, splits.test)
     model_score_fn = make_model_score_fn(predictions)
     model_trades = run_baseline_backtest(
-        data_by_stock, config=CONFIG, score_fn=model_score_fn
+        data_by_stock, config=CONFIG, score_fn=model_score_fn, top_n=TOP_N
     )
 
     _print_performance("Rule-based momentum baseline", baseline_trades)

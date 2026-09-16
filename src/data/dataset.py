@@ -15,14 +15,21 @@ from src.features.engineering import FEATURE_COLUMNS, build_features
 DEFAULT_TARGET_HORIZON = 5
 TARGET_COLUMN = "target_return_5d"
 
-TRAIN_START_DATE = "2024-03-13"
-TRAIN_END_DATE = "2025-12-31"
+# Split boundaries cover the full 5-stock overlap window
+# (2002-10-29 ~ 2026-09-16, confirmed via scripts/check_data_coverage.py
+# -- bounded by 035420's 2002-10-29 listing date). Roughly 70/15/15 by
+# calendar time. The old 2024-03-13 ~ 2026-09-01 boundaries only gave
+# ~38 test days (6 non-overlapping 5-day decisions); this test window
+# (~3.2 years) gives ~230, which is enough to tell a real strategy edge
+# apart from noise.
+TRAIN_START_DATE = "2002-10-29"
+TRAIN_END_DATE = "2019-12-31"
 
-VALIDATION_START_DATE = "2026-01-01"
-VALIDATION_END_DATE = "2026-06-30"
+VALIDATION_START_DATE = "2020-01-01"
+VALIDATION_END_DATE = "2023-06-30"
 
-TEST_START_DATE = "2026-07-01"
-TEST_END_DATE = "2026-09-01"
+TEST_START_DATE = "2023-07-01"
+TEST_END_DATE = "2026-09-16"
 
 
 def build_stock_dataset(

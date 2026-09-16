@@ -56,6 +56,26 @@ def test_rejects_missing_malformed_and_invalid_ohlc(
         normalize_ka10081_response(response)
 
 
+def test_undocumented_change_sign_is_kept_not_rejected(
+    ka10081_response: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Multi-decade history includes reference-price-reset events (stock
+    splits, rights issues) where Kiwoom returns a pred_pre_sig value
+    outside the documented {1..5} set. This field is metadata only --
+    unused by feature engineering, target construction, or the backtest,
+    all of which compute returns directly from close_price -- so it must
+    not discard otherwise-valid OHLCV data."""
+
+    response = deepcopy(ka10081_response)
+    response["stk_dt_pole_chart_qry"][0]["pred_pre_sig"] = "0"
+
+    with caplog.at_level("WARNING"):
+        bars = normalize_ka10081_response(response)
+
+    assert bars[0].previous_close_change_sign == 0
+    assert "Undocumented previous-close change sign" in caplog.text
+
+
 def test_rejects_duplicate_trade_dates(ka10081_response: dict) -> None:
     response = deepcopy(ka10081_response)
     response["stk_dt_pole_chart_qry"][1]["dt"] = "20260831"
