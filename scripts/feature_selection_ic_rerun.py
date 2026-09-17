@@ -15,6 +15,23 @@ Run from the repo root:
     PYTHONPATH=. python3 scripts/feature_selection_ic_rerun.py
 
 Runtime: a few minutes (the Wrapper step trains up to ~150 XGBoost models).
+
+REPRODUCIBILITY NOTE (2026-09-17): the first version of this script used
+XGBoost's default n_jobs=-1 (all available cores). XGBoost's histogram
+tree builder sums per-thread partial results in parallel, and that
+summation order depends on how many threads actually ran -- so the exact
+floating-point result (and therefore which feature wins a near-tied race)
+can differ between machines with different core counts, even with the
+same random_state. This showed up concretely: one run picked
+('atr_pct', 'gap') and another, on different hardware, picked
+('return_20d',) alone -- both from the SAME code and SAME data. Forcing
+DETERMINISTIC_PARAMS = {"n_jobs": 1} below removes that specific source of
+cross-machine variance (single-threaded histogram building sums in a
+fixed order), so re-runs of this exact script should now agree across
+machines. It does not, by itself, make a weak/borderline-significant IC
+result "correct" -- it only makes the number reproducible so that question
+can be investigated on stable footing (e.g. via a walk-forward check
+across several validation windows, not yet implemented here).
 """
 
 from __future__ import annotations
@@ -39,6 +56,11 @@ RAW_SCALE_FEATURES = {
     "atr_14", "volume_sma_20",
 }
 CANDIDATES = tuple(f for f in FEATURE_COLUMNS if f not in RAW_SCALE_FEATURES)
+
+# Force single-threaded XGBoost so results are reproducible across
+# machines with different core counts (see REPRODUCIBILITY NOTE above).
+# Every train_model() call in this script merges this in.
+DETERMINISTIC_PARAMS = {"n_jobs": 1}
 
 # Below this many valid cross-sectional decision-dates, predictions were
 # too close to constant to trust the IC (see the "Top-5 by standalone IC"
@@ -85,6 +107,7 @@ def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, f
         splits.train, splits.train["target_return_5d"],
         splits.validation, splits.validation["target_return_5d"],
         feature_columns=feature_set,
+        params=DETERMINISTIC_PARAMS,
     )
     val = splits.validation.copy()
     val["predicted_return"] = predict(trained, val)
@@ -191,6 +214,7 @@ def embedded_importance(splits) -> tuple[tuple[str, ...], float]:
         splits.train, splits.train["target_return_5d"],
         splits.validation, splits.validation["target_return_5d"],
         feature_columns=CANDIDATES,
+        params=DETERMINISTIC_PARAMS,
     )
     importances = trained.model.feature_importances_
     ranked = sorted(zip(CANDIDATES, importances), key=lambda x: -x[1])
@@ -253,6 +277,7 @@ def main() -> None:
         splits.train, splits.train["target_return_5d"],
         splits.validation, splits.validation["target_return_5d"],
         feature_columns=winner_subset,
+        params=DETERMINISTIC_PARAMS,
     )
     test = splits.test.copy()
     test["predicted_return"] = predict(trained, test)
