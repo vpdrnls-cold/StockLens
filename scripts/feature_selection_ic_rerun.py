@@ -60,7 +60,16 @@ CANDIDATES = tuple(f for f in FEATURE_COLUMNS if f not in RAW_SCALE_FEATURES)
 # Force single-threaded XGBoost so results are reproducible across
 # machines with different core counts (see REPRODUCIBILITY NOTE above).
 # Every train_model() call in this script merges this in.
-DETERMINISTIC_PARAMS = {"n_jobs": 1}
+#
+# UPDATE (CURRENT_STATUS.md item 23): n_jobs=1 alone did NOT fix this --
+# it was later confirmed (this script's own REPRODUCIBILITY NOTE
+# predates that finding) that the real cause is XGBoost's default
+# tree_method="hist" summing histograms in an order that differs by CPU
+# architecture, regardless of thread count. tree_method="exact" gave
+# bit-identical predictions on two genuinely different real machines
+# (Linux x86_64 vs macOS arm64) -- added here so a re-run of this
+# script is actually reproducible, not just single-threaded.
+DETERMINISTIC_PARAMS = {"n_jobs": 1, "tree_method": "exact"}
 
 # Below this many valid cross-sectional decision-dates, predictions were
 # too close to constant to trust the IC (see the "Top-5 by standalone IC"

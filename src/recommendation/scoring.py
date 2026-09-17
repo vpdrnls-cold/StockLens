@@ -226,3 +226,40 @@ def make_profile_score_fn(scored: pd.DataFrame) -> "callable":
         return lookup[key]
 
     return score_fn
+
+
+def add_predicted_return_percentile(signals: pd.DataFrame) -> pd.DataFrame:
+    """Add a ``predicted_return_percentile`` column: each row's
+    cross-sectional rank of ``predicted_return`` within its own
+    ``trade_date``, as a fraction in ``(0.0, 1.0]`` (1.0 = the highest
+    predicted_return that day, close to ``1/n`` = the lowest, ties
+    averaged).
+
+    This is the cross-sectional counterpart to the raw
+    ``predicted_return`` column, for consumers that should judge a
+    stock's signal *relative to that day's universe* rather than
+    against an absolute, zero-anchored threshold -- see
+    ``src.portfolio.optimizer.PositionConfig.sell_percentile_threshold``
+    and AGENTS.md 22's cross-sectional rank IC principle (this model's
+    output is only validated as a relative ranking signal, not as an
+    absolute quantity).
+
+    ``signals`` must have ``trade_date`` and ``predicted_return``
+    columns; a date with a single stock gets percentile 1.0 (trivially
+    "the best" in a universe of one) rather than a division-by-zero
+    error.
+    """
+    required = {"trade_date", "predicted_return"}
+    missing = required - set(signals.columns)
+    if missing:
+        raise ValueError(f"signals is missing required columns: {sorted(missing)}")
+
+    if signals.empty:
+        raise ValueError("signals must not be empty.")
+
+    result = signals.copy()
+    result["predicted_return_percentile"] = result.groupby("trade_date")[
+        "predicted_return"
+    ].rank(pct=True)
+
+    return result

@@ -157,11 +157,19 @@ def simulate_exit_rule(
     baseline_config: BaselineConfig,
     position_config: PositionConfig,
     top_n: int,
+    percentile_lookup: dict[tuple[pd.Timestamp, str], float] | None = None,
 ) -> ExitSimResult:
     """Same decision grid/entry/selection as ``run_baseline_backtest``
     with ``make_model_score_fn`` scoring, but the exit is decided by
     ``evaluate_position`` walking day by day instead of a fixed
     T+holding_days close. See module docstring.
+
+    ``percentile_lookup`` is optional: pass it (from
+    ``src.recommendation.scoring.add_predicted_return_percentile``)
+    when ``position_config.sell_percentile_threshold`` is set, so each
+    day's ``PositionSignal.predicted_return_percentile`` is populated.
+    Omitted (``None``) for the absolute-threshold rule, matching the
+    original behavior of this function.
     """
     if not (1 <= top_n <= len(stock_codes)):
         raise ValueError(f"top_n must be between 1 and {len(stock_codes)}, got {top_n}.")
@@ -213,6 +221,9 @@ def simulate_exit_rule(
                     current_price=current_price,
                     predicted_return=predictions_lookup[key],
                     atr_pct=atr_lookup[key],
+                    predicted_return_percentile=(
+                        percentile_lookup[key] if percentile_lookup is not None else None
+                    ),
                 )
                 decision = evaluate_position(position, signal, position_config)
 
@@ -321,9 +332,20 @@ def main() -> None:
         exit_reasons=["max_holding_reached"] * len(baseline_trades),
     )
 
-    # 2) Current default PositionConfig (3x ATR% stop-loss, 0.0 reversal threshold).
+    # 2) Historical "default" row (3x ATR% stop-loss, absolute reversal
+    #    rule at thr=0.0) -- this is what CURRENT_STATUS.md items 17/18
+    #    documented as "default" before items 20/21 made the percentile
+    #    rule the PositionConfig default; pinned explicitly here
+    #    (sell_percentile_threshold=None) so this row keeps its original,
+    #    documented meaning instead of silently switching rules.
     default_result = simulate_exit_rule(
-        universe, predictions_lookup, atr_lookup, stock_codes, CONFIG, PositionConfig(), TOP_N
+        universe,
+        predictions_lookup,
+        atr_lookup,
+        stock_codes,
+        CONFIG,
+        PositionConfig(sell_predicted_return_threshold=0.0, sell_percentile_threshold=None),
+        TOP_N,
     )
     _print_row(
         "default (3.0x atr, thr=0.0)",
@@ -332,10 +354,16 @@ def main() -> None:
         default_result.exit_reasons,
     )
 
-    # 3) Stop-loss multiplier grid, reversal rule fixed at the default 0.0
-    #    threshold -- isolates the multiplier's effect.
+    # 3) Stop-loss multiplier grid, reversal rule fixed at the absolute
+    #    0.0 threshold (sell_percentile_threshold=None pins this to the
+    #    absolute rule so the grid isolates only the multiplier, as
+    #    originally intended) -- isolates the multiplier's effect.
     for multiple in (1.0, 1.5, 2.0, 4.0, 6.0):
-        cfg = PositionConfig(stop_loss_atr_multiple=multiple, sell_predicted_return_threshold=0.0)
+        cfg = PositionConfig(
+            stop_loss_atr_multiple=multiple,
+            sell_predicted_return_threshold=0.0,
+            sell_percentile_threshold=None,
+        )
         result = simulate_exit_rule(
             universe, predictions_lookup, atr_lookup, stock_codes, CONFIG, cfg, TOP_N
         )
@@ -346,9 +374,13 @@ def main() -> None:
             result.exit_reasons,
         )
 
-    # 4) Stop-loss rule only (reversal rule effectively disabled).
+    # 4) Stop-loss rule only (reversal rule effectively disabled;
+    #    sell_percentile_threshold=None so this stays "no reversal rule
+    #    at all" rather than silently becoming the percentile rule).
     stop_only_cfg = PositionConfig(
-        stop_loss_atr_multiple=3.0, sell_predicted_return_threshold=REVERSAL_DISABLED
+        stop_loss_atr_multiple=3.0,
+        sell_predicted_return_threshold=REVERSAL_DISABLED,
+        sell_percentile_threshold=None,
     )
     stop_only_result = simulate_exit_rule(
         universe, predictions_lookup, atr_lookup, stock_codes, CONFIG, stop_only_cfg, TOP_N
@@ -360,9 +392,13 @@ def main() -> None:
         stop_only_result.exit_reasons,
     )
 
-    # 5) Signal-reversal rule only (stop-loss effectively disabled).
+    # 5) Signal-reversal rule only (stop-loss effectively disabled;
+    #    sell_percentile_threshold=None pins this to the absolute rule,
+    #    matching its original "reversal_thr=0.0" label).
     reversal_only_cfg = PositionConfig(
-        stop_loss_atr_multiple=STOP_LOSS_DISABLED, sell_predicted_return_threshold=0.0
+        stop_loss_atr_multiple=STOP_LOSS_DISABLED,
+        sell_predicted_return_threshold=0.0,
+        sell_percentile_threshold=None,
     )
     reversal_only_result = simulate_exit_rule(
         universe, predictions_lookup, atr_lookup, stock_codes, CONFIG, reversal_only_cfg, TOP_N

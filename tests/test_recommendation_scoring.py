@@ -6,6 +6,7 @@ import pytest
 from src.recommendation.scoring import (
     PROFILES,
     RiskProfile,
+    add_predicted_return_percentile,
     make_profile_score_fn,
     personalize_scores,
     resolve_profile,
@@ -137,3 +138,35 @@ def test_make_profile_score_fn_raises_on_unknown_key() -> None:
     universe = pd.DataFrame({"trade_date": pd.to_datetime(["2099-01-01"])})
     with pytest.raises(KeyError):
         score_fn(universe, "A", 0, lookback_days=5)
+
+
+def test_add_predicted_return_percentile_ranks_within_each_date() -> None:
+    result = add_predicted_return_percentile(_signals())
+
+    day = result[result["trade_date"] == "2024-01-02"].set_index("stock_code")
+    # A (0.03) > B (0.02) > C (0.015) that day -> A highest percentile.
+    assert day.loc["A", "predicted_return_percentile"] == pytest.approx(1.0)
+    assert day.loc["C", "predicted_return_percentile"] == pytest.approx(1.0 / 3.0)
+    assert day.loc["A", "predicted_return_percentile"] > day.loc["B", "predicted_return_percentile"]
+    assert day.loc["B", "predicted_return_percentile"] > day.loc["C", "predicted_return_percentile"]
+
+
+def test_add_predicted_return_percentile_is_independent_per_date() -> None:
+    result = add_predicted_return_percentile(_signals())
+
+    # On 2024-01-09, B (0.02) is now the highest, unlike 2024-01-02 --
+    # each date's ranking must not leak into another date's.
+    day = result[result["trade_date"] == "2024-01-09"].set_index("stock_code")
+    assert day.loc["B", "predicted_return_percentile"] == pytest.approx(1.0)
+
+
+def test_add_predicted_return_percentile_rejects_missing_columns() -> None:
+    incomplete = _signals().drop(columns=["predicted_return"])
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        add_predicted_return_percentile(incomplete)
+
+
+def test_add_predicted_return_percentile_rejects_empty_input() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        add_predicted_return_percentile(_signals().iloc[0:0])

@@ -52,8 +52,14 @@ RAW_SCALE_FEATURES = {
 CANDIDATES = tuple(f for f in FEATURE_COLUMNS if f not in RAW_SCALE_FEATURES)
 
 # Same fix as feature_selection_ic_rerun.py: single-threaded for
-# reproducible re-runs on THIS machine.
-DETERMINISTIC_PARAMS = {"n_jobs": 1}
+# reproducible re-runs. Single-threaded alone turned out not to be
+# enough ACROSS machines either (CURRENT_STATUS.md item 23 traced this
+# script's own original cross-machine Wrapper-winner mismatch, noted in
+# the module docstring above, to XGBoost's tree_method="hist"
+# histogram summation order differing by CPU architecture) --
+# tree_method="exact" gave bit-identical results on two genuinely
+# different real machines (Linux x86_64 vs macOS arm64).
+DETERMINISTIC_PARAMS = {"n_jobs": 1, "tree_method": "exact"}
 
 MIN_DAYS = 300
 MAX_WRAPPER_FEATURES = 6  # keep each window's search cheap
