@@ -608,6 +608,33 @@ The final selected set should be justified by:
 -   predictive usefulness
 -   backtest behavior
 
+Do not mix raw-price/volume-scale features with scale-free features in
+a model that ranks/compares MULTIPLE stocks against each other
+(cross-sectional use). Raw-scale quantities (e.g. a moving average or
+ATR expressed in currency units, not divided by price) differ
+structurally between stocks purely because of price level, independent
+of any real time-varying signal. A model trained across stocks can
+exploit this to effectively memorize "which stock is this" instead of
+learning a genuine ranking signal, and this will not show up in a
+pooled regression metric -- only in the model's actual stock picks.
+(Discovered the hard way: an RFE+XGBoost feature set of
+[sma_5, sma_60, macd_hist, volatility_20, atr_14] looked fine by
+validation RMSE but picked the same single highest-priced stock on
+every decision date in the test-period backtest. Fix: use the
+scale-free equivalent of a raw feature, e.g. price_to_sma_N instead of
+sma_N, atr_pct instead of atr_14.)
+
+A single train/validation split is not sufficient to trust a Filter,
+Wrapper, or Embedded selection result, especially from a greedy
+search (e.g. Sequential Forward Selection): a greedy Wrapper will
+always report SOME winning subset even when it is fitting noise
+specific to that one validation window. Before adopting a narrower
+feature subset than the current default, confirm the "winning"
+subset (or at least the same features recurring) across multiple
+non-overlapping historical train/validation windows (walk-forward),
+not just the current default split. Treat a single-window winner as
+inconclusive, not as a result.
+
 ------------------------------------------------------------------------
 
 13. TIME SERIES SPLITTING
@@ -908,6 +935,23 @@ Evaluate recommendation-level outcomes where appropriate:
 
 Exact metrics depend on the final prediction/recommendation definition.
 
+When the actual objective is ranking multiple stocks against each
+other on the same date (a cross-sectional ranking problem, which
+Top-N stock recommendation always is), do not rely on a pooled
+regression metric (RMSE, pooled correlation) computed across all
+stocks and dates together as the primary evaluation metric. Pooled
+metrics can look good purely from between-stock or between-day scale
+differences that have nothing to do with the actual ranking task.
+Prefer cross-sectional rank IC: for each decision date, compute the
+Spearman rank correlation between predicted score and actual forward
+return across that date's stock universe, then average across dates.
+Discard/flag any IC computed from too few valid cross-sectional
+decision-dates (few enough that predictions were effectively constant
+that day) -- treat under ~300 valid days as unreliable rather than a
+real result; a very high IC from ~50 days was previously a false
+positive caused by a near-untrained model that produced almost
+constant predictions on most days.
+
 ------------------------------------------------------------------------
 
 23. SURVIVORSHIP / UNIVERSE BIAS
@@ -976,6 +1020,18 @@ When measuring latency, separate:
 -   UI/rendering
 
 Do not claim the target is achieved without measurement.
+
+Reproducibility note: a fixed random_state does not guarantee
+identical results across machines for histogram-based tree models
+(e.g. XGBoost) when using multi-threaded training (n_jobs=-1 or > 1)
+-- thread-partial-sum ordering can differ with core count and produce
+different floating-point results, including different Feature
+Selection winners, on otherwise identical code and data. When an
+experiment's conclusion depends on comparing exact results across
+runs or machines, pin n_jobs=1 for that experiment. Note this does
+not fix every cross-machine discrepancy -- if results still differ
+after pinning n_jobs=1, the cause is not threading and needs separate
+investigation (e.g. package versions, data checksums).
 
 ------------------------------------------------------------------------
 
