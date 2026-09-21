@@ -10,13 +10,8 @@ from src.portfolio.optimizer import (
 
 
 def test_hold_explanation_mentions_hold_and_both_numbers() -> None:
-    # predicted_return_percentile=0.5 is well above the default 0.20
-    # percentile-reversal threshold (CURRENT_STATUS.md items 20/21), so
-    # it doesn't fire here either.
     position = Position(stock_code="A", entry_price=10_000.0)
-    signal = PositionSignal(
-        current_price=10_200.0, predicted_return=0.02, atr_pct=0.02, predicted_return_percentile=0.5
-    )
+    signal = PositionSignal(current_price=10_200.0, predicted_return=0.02, atr_pct=0.02)
 
     decision = evaluate_position(position, signal)
     text = explain_position_decision(position, decision)
@@ -27,13 +22,8 @@ def test_hold_explanation_mentions_hold_and_both_numbers() -> None:
 
 
 def test_stop_loss_sell_explanation_mentions_stop_loss() -> None:
-    # predicted_return_percentile is required by evaluate_position's
-    # validation even though stop-loss is what actually decides this
-    # case -- 0.9 is far from the reversal cutoff so it stays that way.
     position = Position(stock_code="A", entry_price=10_000.0)
-    signal = PositionSignal(
-        current_price=9_000.0, predicted_return=0.01, atr_pct=0.02, predicted_return_percentile=0.9
-    )
+    signal = PositionSignal(current_price=9_000.0, predicted_return=0.01, atr_pct=0.02)
 
     decision = evaluate_position(position, signal)
     text = explain_position_decision(position, decision)
@@ -45,13 +35,13 @@ def test_stop_loss_sell_explanation_mentions_stop_loss() -> None:
 
 
 def test_signal_reversal_sell_explanation_mentions_model_signal() -> None:
-    # The absolute rule is opt-in since items 20/21 made the percentile
-    # rule the default -- sell_percentile_threshold=None switches back
-    # to it explicitly so this test still exercises the absolute-rule
-    # explanation wording.
+    # Both reversal thresholds default to None (CURRENT_STATUS.md item
+    # 25) -- the absolute rule requires opting in explicitly by setting
+    # sell_predicted_return_threshold, so this test still exercises the
+    # absolute-rule explanation wording.
     position = Position(stock_code="A", entry_price=10_000.0)
     signal = PositionSignal(current_price=9_900.0, predicted_return=-0.01, atr_pct=0.05)
-    config = PositionConfig(sell_percentile_threshold=None)
+    config = PositionConfig(sell_predicted_return_threshold=0.0, sell_percentile_threshold=None)
 
     decision = evaluate_position(position, signal, config=config)
     text = explain_position_decision(position, decision)
@@ -63,13 +53,10 @@ def test_signal_reversal_sell_explanation_mentions_model_signal() -> None:
 
 
 def test_explanation_reflects_custom_config_thresholds() -> None:
-    # predicted_return_percentile=0.9 keeps the (now-default) percentile
-    # reversal rule from firing on its own, so this test isolates the
-    # stop-loss multiplier as originally intended.
+    # No signal-reversal rule is active by default (item 25), so this
+    # isolates the stop-loss multiplier as originally intended.
     position = Position(stock_code="A", entry_price=10_000.0)
-    signal = PositionSignal(
-        current_price=9_600.0, predicted_return=0.01, atr_pct=0.02, predicted_return_percentile=0.9
-    )
+    signal = PositionSignal(current_price=9_600.0, predicted_return=0.01, atr_pct=0.02)
 
     default_decision = evaluate_position(position, signal)
     assert "[보유(HOLD)]" in explain_position_decision(position, default_decision)

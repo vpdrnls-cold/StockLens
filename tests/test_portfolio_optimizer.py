@@ -12,16 +12,8 @@ from src.portfolio.optimizer import (
 
 
 def test_hold_when_within_stop_loss_and_signal_still_positive() -> None:
-    # predicted_return_percentile=0.5 is well above the default 0.20
-    # percentile-reversal threshold, so the percentile rule (now the
-    # default, CURRENT_STATUS.md items 20/21) doesn't fire either.
     position = Position(stock_code="A", entry_price=10_000.0)
-    signal = PositionSignal(
-        current_price=10_200.0,
-        predicted_return=0.02,
-        atr_pct=0.02,
-        predicted_return_percentile=0.5,
-    )
+    signal = PositionSignal(current_price=10_200.0, predicted_return=0.02, atr_pct=0.02)
 
     result = evaluate_position(position, signal)
 
@@ -32,16 +24,9 @@ def test_hold_when_within_stop_loss_and_signal_still_positive() -> None:
 def test_sell_on_stop_loss_even_if_model_still_predicts_a_gain() -> None:
     # atr_pct=0.02, default 3x multiple -> stop-loss threshold = -6%.
     # Price has dropped 10%, well past it, even though predicted_return
-    # is still positive and predicted_return_percentile (0.9) is nowhere
-    # near the reversal cutoff: risk control overrides the model signal
-    # regardless of which reversal variant is configured.
+    # is still positive: risk control overrides the model signal.
     position = Position(stock_code="A", entry_price=10_000.0)
-    signal = PositionSignal(
-        current_price=9_000.0,
-        predicted_return=0.01,
-        atr_pct=0.02,
-        predicted_return_percentile=0.9,
-    )
+    signal = PositionSignal(current_price=9_000.0, predicted_return=0.01, atr_pct=0.02)
 
     result = evaluate_position(position, signal)
 
@@ -51,15 +36,36 @@ def test_sell_on_stop_loss_even_if_model_still_predicts_a_gain() -> None:
     assert result.stop_loss_threshold == pytest.approx(-0.06)
 
 
+def test_default_config_has_no_signal_reversal_rule() -> None:
+    # CURRENT_STATUS.md item 25: both reversal variants were tried as
+    # the default (absolute pre-item-20, percentile in item 22) and
+    # neither survived validation -- the default config is stop-loss
+    # only. A deeply negative predicted_return and a worst-of-universe
+    # percentile must NOT trigger a SELL on their own when the position
+    # is still within the stop-loss line.
+    position = Position(stock_code="A", entry_price=10_000.0)
+    signal = PositionSignal(
+        current_price=9_900.0,
+        predicted_return=-0.05,
+        atr_pct=0.05,
+        predicted_return_percentile=0.0,
+    )
+
+    result = evaluate_position(position, signal)
+
+    assert result.decision == Decision.HOLD
+
+
 def test_sell_on_signal_reversal_absolute_rule_when_opted_in() -> None:
-    # The absolute rule is opt-in since items 20/21 made the percentile
-    # rule the default -- sell_percentile_threshold=None switches back
-    # to it explicitly. Small unrealized loss, well above the
-    # stop-loss line, but the model no longer predicts a positive
-    # return for this stock.
+    # Both reversal thresholds default to None (item 25) -- the
+    # absolute rule requires opting in explicitly by setting
+    # sell_predicted_return_threshold (sell_percentile_threshold stays
+    # None so the percentile branch doesn't take priority). Small
+    # unrealized loss, well above the stop-loss line, but the model no
+    # longer predicts a positive return for this stock.
     position = Position(stock_code="A", entry_price=10_000.0)
     signal = PositionSignal(current_price=9_900.0, predicted_return=-0.01, atr_pct=0.05)
-    config = PositionConfig(sell_percentile_threshold=None)
+    config = PositionConfig(sell_predicted_return_threshold=0.0, sell_percentile_threshold=None)
 
     result = evaluate_position(position, signal, config=config)
 
@@ -70,16 +76,10 @@ def test_sell_on_signal_reversal_absolute_rule_when_opted_in() -> None:
 def test_custom_config_changes_thresholds() -> None:
     position = Position(stock_code="A", entry_price=10_000.0)
     # -4% unrealized return; default 3x*atr_pct(0.02)=-6% would HOLD,
-    # but a tighter 1x multiple makes the stop-loss threshold -2%.
-    # predicted_return_percentile=0.9 keeps the (now-default) percentile
-    # reversal rule from firing on its own, so this test isolates the
-    # stop-loss multiplier as originally intended.
-    signal = PositionSignal(
-        current_price=9_600.0,
-        predicted_return=0.01,
-        atr_pct=0.02,
-        predicted_return_percentile=0.9,
-    )
+    # but a tighter 1x multiple makes the stop-loss threshold -2%. No
+    # signal-reversal rule is active by default (item 25), so this
+    # isolates the stop-loss multiplier as originally intended.
+    signal = PositionSignal(current_price=9_600.0, predicted_return=0.01, atr_pct=0.02)
 
     default_result = evaluate_position(position, signal)
     assert default_result.decision == Decision.HOLD

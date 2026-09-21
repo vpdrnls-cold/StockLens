@@ -84,9 +84,11 @@ def main() -> None:
     )
 
     # Cross-sectional percentile needs every stock's predicted_return on
-    # the same date -- add it before slicing to a single day (also
-    # needed below for the PositionSignal, since PositionConfig's
-    # default is now the percentile rule, CURRENT_STATUS.md items 20/21).
+    # the same date -- add it before slicing to a single day. Not
+    # strictly required by PositionConfig's default anymore (item 25:
+    # the default has no signal-reversal rule at all), but it's cheap
+    # and keeps the PositionSignal below fully populated, matching what
+    # a real caller with sell_percentile_threshold set would pass.
     signals = add_predicted_return_percentile(signals)
 
     last_date = signals["trade_date"].max()
