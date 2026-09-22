@@ -9,6 +9,7 @@ from src.backtest.baseline import BaselineConfig
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
+from src.eval.test_lock import confirm_final_test_use
 from src.ml.backtest import run_baseline_backtest
 
 
@@ -55,6 +56,8 @@ def main() -> None:
     )
 
     splits = split_by_time(dataset)
+
+    confirm_final_test_use("run_backtest.py")
 
     print("=== Baseline Backtest ===")
     print(

@@ -43,6 +43,7 @@ from scipy import stats
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
+from src.eval.test_lock import confirm_final_test_use
 from src.features.engineering import FEATURE_COLUMNS
 from src.models.predict import train_model, predict
 
@@ -303,6 +304,8 @@ def main() -> None:
     winner_label, winner_subset, winner_ic = max(candidates, key=lambda c: c[2])
     print(f"\n>> OVERALL WINNER on validation: {winner_label} (IC={winner_ic:+.4f})")
     print(f"   features: {winner_subset}")
+
+    confirm_final_test_use("feature_selection_ic_rerun.py")
 
     print("\n" + "=" * 90)
     print("ONE-TIME TEST CONFIRMATION (test period touched exactly once, here)")

@@ -33,6 +33,7 @@ from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
 from src.features.engineering import SELECTED_FEATURES
+from src.eval.test_lock import confirm_final_test_use
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from src.models.predict import train_model
 
@@ -131,6 +132,8 @@ def main() -> None:
     print(f"Best iteration: {trained.best_iteration}")
     print(f"Features: {list(trained.feature_columns)}")
     print()
+
+    confirm_final_test_use("run_ml_backtest.py")
 
     print("=== Running FINAL evaluation on the untouched test period ===")
     print(

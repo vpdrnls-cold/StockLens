@@ -417,3 +417,11 @@ MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신�
 - **주의(편향)**: 반전 전략의 방향은 모멘텀이 지는 것을 본 뒤, 그리고 같은 검증 구간의 feature IC를 본 뒤에 정한 것이므로 이 검증 결과에는 선택 편향이 일부 있음. 손익분기 비용은 gross ≈0.3%/5일로, 세금+수수료(~0.23%)만으로도 여유가 ≈0.07%뿐이어서 구조적으로 빠듯함.
 - **결론**: 현 feature(가격/거래량 기반 19개)와 5일 전량 교체 방식으로는 비용 차감 후 수익성 근거 없음. `SELECTED_FEATURES`, 기본 모델, 운용 방식 변경 없음. 테스트 구간 추가 사용 없음.
 - **다음 단계 후보**: (1) 회전율 절감(보유 종목이 상위 2k 안이면 유지하는 buffer 규칙)과 비용 민감도(슬리피지 0.03/0.1%)를 사전에 정한 그리드로 검증 구간에서 확인. (2) early stopping을 IC 기준으로 변경(W3 best_iteration=8 문제). (3) 가격 기반 신호의 한계가 확인됐으므로 Phase H~J(뉴스/거시/거래량·수급 feature) 진행.
+
+34. **Test set 접근을 구조적으로 잠금 — 문서화가 아니라 코드로 강제(Phase H 진입 전 방법론 안전장치 1번째 항목)**
+
+- **배경**: AGENTS.md 13절이 "test 구간을 반복 사용해 설계 결정을 내리지 말 것"을 이미 명시하고 있었는데도, 항목 14·30·31에서 실제로 test를 여러 번 들여다봤음. 특히 `feature_selection_ic_rerun.py`의 "ONE-TIME TEST CONFIRMATION" 섹션은 이름 그대로 "한 번만"이라고 주석에 적어뒀을 뿐이었고, IC 계산 편향 버그(항목 30)를 고치기 위해 스크립트를 다시 실행하면서 그 섹션도 같이 다시 실행돼 test를 한 번 더 보게 됨(항목 31에서 자체적으로 인지). 즉 "기억해서 지키기"는 이미 한 번 실패한 방식임.
+- **원칙**: `src/feature_selection/data_loading.py`가 leakage를 "고치는 게 아니라 구조적으로 불가능하게" 만든 것과 같은 방식을 test 구간에도 적용. 사람이 기억해야 하는 규칙이 아니라 코드가 막는 규칙으로 전환.
+- **구현**: `src/eval/test_lock.py` 신규 — `confirm_final_test_use(caller)`가 환경변수 `STOCKLENS_CONFIRM_FINAL_TEST=1`이 없으면 `TestSetLockedError`를 던짐. `splits.test`를 실제로 읽는 세 스크립트(`scripts/run_backtest.py`, `scripts/run_ml_backtest.py`, `scripts/feature_selection_ic_rerun.py`)의 test 접근 직전에 이 호출을 추가함. 순수 validation 실험용 walk-forward 스크립트들(`walk_forward_wrapper.py`, `walk_forward_signal_reversal.py`, `walk_forward_position_thresholds.py`, `walk_forward_backtest_compare.py`, `experiment_target_transform.py`)은 애초에 `splits.test`를 읽지 않고 `TEST_START_DATE`를 validation 구간의 상한 경계로만 쓰고 있어서(재확인 완료) 수정 불필요.
+- **검증**: 신규 테스트 4개(`tests/test_eval_test_lock.py`) 포함 전체 162개 통과. `python -m scripts.run_backtest`를 환경변수 없이 실행하면 test 접근 직전에 `TestSetLockedError`로 즉시 중단되는 것, `STOCKLENS_CONFIRM_FINAL_TEST=1`로는 정상적으로 끝까지 실행되는 것(core5 baseline 누적수익 +42.28%, 항목 11 이후 기록된 5종목 결과 범위와 일치)을 직접 실행해 확인함.
+- **다음 단계**: 이제부터 진행하는 회전율/비용 그리드, IC 기준 early stopping, Window1 원인 조사, rank/분류 타겟·모멘텀+ML 앙상블 실험은 전부 validation에서만 수행하고(위 스크립트들은 test를 안 읽으므로 자동으로 안전함), `STOCKLENS_CONFIRM_FINAL_TEST=1`은 이 실험들이 전부 끝나고 최종 결론을 낼 때 딱 한 번만 사용한다. 이 플래그를 켜는 걸 이번 결정 사이클의 "끝났다"는 신호로 취급할 것.

@@ -1412,3 +1412,38 @@ The goal is to build a defensible, reproducible, explainable
 personalized recommendation system incrementally.
 
 MVP 목표: 과거 일봉 OHLCV로부터 기술적 특징을 생성하고, leakage-safe한 시계열 학습/검증 구조를 통해 미래 수익률 또는 방향을 예측하는 ML 모델을 구축한 뒤, 단순 rule-based baseline과 비교하여 실제로 유의미한 예측/추천 가능성이 있는지 검증한다.
+
+------------------------------------------------------------------------
+
+42. TEST SET ACCESS IS STRUCTURALLY GATED, NOT JUST DOCUMENTED
+
+Section 13 already says the final test period must not be used to
+repeatedly make design decisions. In practice it was anyway
+(CURRENT_STATUS.md items 14, 30, 31): a script with a "one-time test
+check" section at the bottom got rerun for an unrelated reason (e.g. a
+bug fix) and quietly touched test again. A comment saying "one-time"
+did not stop that.
+
+The fix follows the same principle as leakage prevention in
+``src/feature_selection/data_loading.py`` (see learnings.md: "Data
+leakage is structurally prevented, not just fixed"): make it
+mechanically impossible to touch the test split by accident, instead
+of trusting a comment.
+
+``src/eval/test_lock.py`` provides ``confirm_final_test_use(caller)``.
+Any code path that reads the test split (``splits.test``,
+``load_split("test")``, or equivalent) must call this immediately
+before that first read. It raises ``TestSetLockedError`` unless the
+environment variable ``STOCKLENS_CONFIRM_FINAL_TEST=1`` is set for
+that run. Currently wired into
+``scripts/run_backtest.py``, ``scripts/run_ml_backtest.py``, and
+``scripts/feature_selection_ic_rerun.py`` -- any new script or
+function that reads the test split must add this call too.
+
+Before setting ``STOCKLENS_CONFIRM_FINAL_TEST=1`` for a real run,
+confirm every validation-only experiment for the current decision
+(e.g. the turnover/cost-sensitivity grid, the IC-based early-stopping
+check, the Window1 ``best_iteration`` investigation, and the
+rank/classification-target and momentum+ML ensemble experiments
+queued after Phase G, per CURRENT_STATUS.md item 34) is actually
+finished. Do not set it just to make an error go away.
