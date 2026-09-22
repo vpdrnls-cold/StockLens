@@ -1,0 +1,258 @@
+{
+  "name": "kospi200_top50",
+  "as_of": "2026-09-21",
+  "source": "Kiwoom ka20002 (KOSPI200) + ka10001 (mac)",
+  "note": "Largest common-stock KOSPI200 constituents by market cap on `as_of`; survivorship-biased for earlier history.",
+  "stocks": [
+    {
+      "code": "005930",
+      "name": "삼성전자",
+      "market_cap_eok": 15843415
+    },
+    {
+      "code": "000660",
+      "name": "SK하이닉스",
+      "market_cap_eok": 13645597
+    },
+    {
+      "code": "402340",
+      "name": "SK스퀘어",
+      "market_cap_eok": 1480187
+    },
+    {
+      "code": "009150",
+      "name": "삼성전기",
+      "market_cap_eok": 1057663
+    },
+    {
+      "code": "373220",
+      "name": "LG에너지솔루션",
+      "market_cap_eok": 827190
+    },
+    {
+      "code": "005380",
+      "name": "현대차",
+      "market_cap_eok": 738152
+    },
+    {
+      "code": "207940",
+      "name": "삼성바이오로직스",
+      "market_cap_eok": 648999
+    },
+    {
+      "code": "105560",
+      "name": "KB금융",
+      "market_cap_eok": 629748
+    },
+    {
+      "code": "028260",
+      "name": "삼성물산",
+      "market_cap_eok": 593533
+    },
+    {
+      "code": "032830",
+      "name": "삼성생명",
+      "market_cap_eok": 582000
+    },
+    {
+      "code": "012450",
+      "name": "한화에어로스페이스",
+      "market_cap_eok": 553275
+    },
+    {
+      "code": "034020",
+      "name": "두산에너빌리티",
+      "market_cap_eok": 546399
+    },
+    {
+      "code": "055550",
+      "name": "신한지주",
+      "market_cap_eok": 530009
+    },
+    {
+      "code": "329180",
+      "name": "HD현대중공업",
+      "market_cap_eok": 473375
+    },
+    {
+      "code": "000270",
+      "name": "기아",
+      "market_cap_eok": 467715
+    },
+    {
+      "code": "006400",
+      "name": "삼성SDI",
+      "market_cap_eok": 429118
+    },
+    {
+      "code": "068270",
+      "name": "셀트리온",
+      "market_cap_eok": 421270
+    },
+    {
+      "code": "034730",
+      "name": "SK",
+      "market_cap_eok": 411090
+    },
+    {
+      "code": "086790",
+      "name": "하나금융지주",
+      "market_cap_eok": 367164
+    },
+    {
+      "code": "012330",
+      "name": "현대모비스",
+      "market_cap_eok": 335031
+    },
+    {
+      "code": "066570",
+      "name": "LG전자",
+      "market_cap_eok": 326584
+    },
+    {
+      "code": "010120",
+      "name": "LS ELECTRIC",
+      "market_cap_eok": 312000
+    },
+    {
+      "code": "035420",
+      "name": "NAVER",
+      "market_cap_eok": 299778
+    },
+    {
+      "code": "000810",
+      "name": "삼성화재",
+      "market_cap_eok": 291102
+    },
+    {
+      "code": "298040",
+      "name": "효성중공업",
+      "market_cap_eok": 271065
+    },
+    {
+      "code": "316140",
+      "name": "우리금융지주",
+      "market_cap_eok": 268190
+    },
+    {
+      "code": "267260",
+      "name": "HD현대일렉트릭",
+      "market_cap_eok": 258097
+    },
+    {
+      "code": "005490",
+      "name": "POSCO홀딩스",
+      "market_cap_eok": 253177
+    },
+    {
+      "code": "042660",
+      "name": "한화오션",
+      "market_cap_eok": 250953
+    },
+    {
+      "code": "009540",
+      "name": "HD한국조선해양",
+      "market_cap_eok": 239567
+    },
+    {
+      "code": "010130",
+      "name": "고려아연",
+      "market_cap_eok": 234821
+    },
+    {
+      "code": "096770",
+      "name": "SK이노베이션",
+      "market_cap_eok": 234645
+    },
+    {
+      "code": "000150",
+      "name": "두산",
+      "market_cap_eok": 230924
+    },
+    {
+      "code": "042700",
+      "name": "한미반도체",
+      "market_cap_eok": 225413
+    },
+    {
+      "code": "138040",
+      "name": "메리츠금융지주",
+      "market_cap_eok": 216213
+    },
+    {
+      "code": "015760",
+      "name": "한국전력",
+      "market_cap_eok": 198367
+    },
+    {
+      "code": "011200",
+      "name": "HMM",
+      "market_cap_eok": 197137
+    },
+    {
+      "code": "017670",
+      "name": "SK텔레콤",
+      "market_cap_eok": 188156
+    },
+    {
+      "code": "051910",
+      "name": "LG화학",
+      "market_cap_eok": 185305
+    },
+    {
+      "code": "010140",
+      "name": "삼성중공업",
+      "market_cap_eok": 181280
+    },
+    {
+      "code": "033780",
+      "name": "KT&G",
+      "market_cap_eok": 179904
+    },
+    {
+      "code": "018260",
+      "name": "삼성에스디에스",
+      "market_cap_eok": 173713
+    },
+    {
+      "code": "010950",
+      "name": "S-Oil",
+      "market_cap_eok": 172477
+    },
+    {
+      "code": "006800",
+      "name": "미래에셋증권",
+      "market_cap_eok": 171595
+    },
+    {
+      "code": "003550",
+      "name": "LG",
+      "market_cap_eok": 168126
+    },
+    {
+      "code": "267250",
+      "name": "HD현대",
+      "market_cap_eok": 166675
+    },
+    {
+      "code": "079550",
+      "name": "LIG디펜스앤에어로스페이스",
+      "market_cap_eok": 164340
+    },
+    {
+      "code": "024110",
+      "name": "기업은행",
+      "market_cap_eok": 160681
+    },
+    {
+      "code": "003670",
+      "name": "포스코퓨처엠",
+      "market_cap_eok": 158947
+    },
+    {
+      "code": "086280",
+      "name": "현대글로비스",
+      "market_cap_eok": 149625
+    }
+  ]
+}

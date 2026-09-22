@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Mapping, Sequence
@@ -26,6 +26,18 @@ DAILY_CHART_ROWS_KEY = "stk_dt_pole_chart_qry"
 _DOCUMENTED_CHANGE_SIGNS = {1, 2, 3, 4, 5}
 
 
+# Very old bars (1980s~1990s) of long-listed stocks come back from Kiwoom
+# with internally inconsistent OHLC (e.g. high below close), an artifact
+# of adjusting/rounding prices for decades of splits and rights issues
+# (seen for 000270 Kia in 1985 and 009150 Samsung Electro-Mechanics in
+# 1986). Nothing in the model pipeline uses them: the training window
+# starts at 2002-10-29 (src/data/dataset.py) and rolling features only
+# look back ~60 bars. Rather than discard a whole stock over a 40-year-old
+# bar, OHLC-inconsistent bars dated BEFORE this cutoff are dropped with a
+# warning; the same inconsistency on/after it is still a hard error.
+LEGACY_OHLC_TOLERANCE_BEFORE = date(2000, 1, 1)
+
+
 class HistoricalDataValidationError(ValueError):
     """Raised when raw historical market data is missing, malformed, or invalid."""
 
@@ -43,8 +55,39 @@ def normalize_ka10081_response(response: Mapping[str, Any]) -> list[DailyBar]:
         _normalize_daily_chart_row(stock_code, row, row_index)
         for row_index, row in enumerate(rows)
     ]
+    bars = _drop_legacy_ohlc_inconsistent_bars(bars)
     validate_daily_bars(bars)
     return bars
+
+
+def _ohlc_is_inconsistent(bar: DailyBar) -> bool:
+    return (
+        bar.low_price > min(bar.open_price, bar.close_price)
+        or bar.high_price < max(bar.open_price, bar.close_price)
+        or bar.low_price > bar.high_price
+    )
+
+
+def _drop_legacy_ohlc_inconsistent_bars(bars: list[DailyBar]) -> list[DailyBar]:
+    dropped = [
+        bar
+        for bar in bars
+        if bar.trade_date < LEGACY_OHLC_TOLERANCE_BEFORE and _ohlc_is_inconsistent(bar)
+    ]
+    if not dropped:
+        return bars
+
+    logger.warning(
+        "Dropped %d OHLC-inconsistent legacy bar(s) before %s for %s "
+        "(%s ~ %s). They predate the model's training window.",
+        len(dropped),
+        LEGACY_OHLC_TOLERANCE_BEFORE.isoformat(),
+        dropped[0].stock_code,
+        min(bar.trade_date for bar in dropped).isoformat(),
+        max(bar.trade_date for bar in dropped).isoformat(),
+    )
+    dropped_ids = {id(bar) for bar in dropped}
+    return [bar for bar in bars if id(bar) not in dropped_ids]
 
 
 def validate_daily_bars(bars: Sequence[DailyBar]) -> None:

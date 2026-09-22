@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 import json
+import math
 
+import numpy as np
 import pandas as pd
 
 
@@ -21,6 +23,19 @@ class BaselineConfig:
 
     buy_slippage: float = 0.0010
     sell_slippage: float = 0.0010
+
+    # False (default): the original five-stock behavior -- every stock
+    # must have a bar on every date the engine uses (inner join), and
+    # exactly five stocks are required. Every result recorded in
+    # CURRENT_STATUS.md items 14~26 was produced this way.
+    #
+    # True: any number of stocks with different listing dates. The
+    # calendar is the union of all stocks' dates, and each decision date
+    # only ranks the stocks that actually have the prices needed for
+    # that trade (see ``run_baseline_backtest``). Without this, an
+    # inner join over ~50 stocks would shrink the usable history to that
+    # of the most recently listed stock.
+    allow_partial_universe: bool = False
 
 
 @dataclass(frozen=True)
@@ -99,12 +114,23 @@ def load_historical_data(path: str | Path) -> pd.DataFrame:
 
 def prepare_universe(
     data_by_stock: dict[str, pd.DataFrame],
+    *,
+    how: str = "inner",
 ) -> pd.DataFrame:
     """
-    Build a common-date universe for the five stocks.
+    Build the wide (one column pair per stock) price universe.
 
-    Only dates present for every stock are retained.
+    ``how="inner"`` (default): only dates present for every stock are
+    retained -- the original five-stock behavior.
+
+    ``how="outer"``: the union of all stocks' dates is kept; a stock
+    without a bar on a date has NaN there. Used with
+    ``BaselineConfig.allow_partial_universe`` for larger universes whose
+    members were listed at different times.
     """
+    if how not in {"inner", "outer"}:
+        raise ValueError(f"how must be 'inner' or 'outer', got {how!r}.")
+
     if not data_by_stock:
         raise ValueError("No historical data supplied.")
 
@@ -140,7 +166,7 @@ def prepare_universe(
         universe = universe.merge(
             frame,
             on="trade_date",
-            how="inner",
+            how=how,
             validate="one_to_one",
         )
 
@@ -208,6 +234,49 @@ def calculate_net_return(
     return gross_return, net_return
 
 
+def _eligible_scores(
+    universe: pd.DataFrame,
+    stock_codes: list[str],
+    decision_index: int,
+    entry_index: int,
+    exit_index: int,
+    lookback_days: int,
+    score_fn: Callable[[pd.DataFrame, str, int, int], float],
+    open_arrays: dict[str, np.ndarray],
+    close_arrays: dict[str, np.ndarray],
+) -> dict[str, float]:
+    """Score only the stocks that can actually be traded on this date.
+
+    A stock is eligible when it has a positive price for every value
+    the trade needs (close at T-lookback and T for the score, open at
+    T+1, close at T+holding) and ``score_fn`` can produce a finite
+    score for it (a model score_fn raises ``KeyError`` where the
+    feature warm-up left no prediction).
+    """
+    scores: dict[str, float] = {}
+
+    for stock_code in stock_codes:
+        closes = close_arrays[stock_code]
+        needed = (
+            closes[decision_index - lookback_days],
+            closes[decision_index],
+            open_arrays[stock_code][entry_index],
+            closes[exit_index],
+        )
+        if not all(math.isfinite(value) and value > 0 for value in needed):
+            continue
+
+        try:
+            score = score_fn(universe, stock_code, decision_index, lookback_days)
+        except KeyError:
+            continue
+
+        if math.isfinite(score):
+            scores[stock_code] = score
+
+    return scores
+
+
 def run_baseline_backtest(
     data_by_stock: dict[str, pd.DataFrame],
     config: BaselineConfig | None = None,
@@ -245,15 +314,25 @@ def run_baseline_backtest(
         ``calculate_performance`` to combine same-date trades into a
         single portfolio-level return per period; treating each Trade
         as its own period would double-count capital.
+
+    Universe size:
+        By default exactly five stocks, all required to have a bar on
+        every used date. With ``config.allow_partial_universe=True`` any
+        number of stocks is accepted; each decision date then ranks only
+        the stocks with valid prices for that whole trade, and a date
+        with fewer than ``top_n`` such stocks is skipped (cash).
     """
 
     config = config or BaselineConfig()
 
     stock_codes = list(data_by_stock.keys())
+    partial = config.allow_partial_universe
 
-    if len(stock_codes) != 5:
+    if not partial and len(stock_codes) != 5:
         raise ValueError(
-            f"Baseline expects five stocks, got {len(stock_codes)}."
+            f"Baseline expects five stocks, got {len(stock_codes)}. "
+            "Set BaselineConfig(allow_partial_universe=True) for a "
+            "larger universe."
         )
 
     if not (1 <= top_n <= len(stock_codes)):
@@ -261,7 +340,9 @@ def run_baseline_backtest(
             f"top_n must be between 1 and {len(stock_codes)}, got {top_n}."
         )
 
-    universe = prepare_universe(data_by_stock)
+    universe = prepare_universe(
+        data_by_stock, how="outer" if partial else "inner"
+    )
 
     required_rows = (
         config.lookback_days
@@ -271,6 +352,16 @@ def run_baseline_backtest(
 
     if len(universe) < required_rows:
         return []
+
+    if partial:
+        open_arrays = {
+            code: universe[f"open_{code}"].to_numpy(dtype=float)
+            for code in stock_codes
+        }
+        close_arrays = {
+            code: universe[f"close_{code}"].to_numpy(dtype=float)
+            for code in stock_codes
+        }
 
     trades: list[Trade] = []
 
@@ -295,22 +386,39 @@ def run_baseline_backtest(
     ):
         decision_date = universe.iloc[decision_index]["trade_date"]
 
-        scores = {
-            stock_code: score_fn(
+        entry_index = decision_index + 1
+        exit_index = decision_index + config.holding_days
+
+        if partial:
+            scores = _eligible_scores(
                 universe,
-                stock_code,
+                stock_codes,
                 decision_index,
+                entry_index,
+                exit_index,
                 config.lookback_days,
+                score_fn,
+                open_arrays,
+                close_arrays,
             )
-            for stock_code in stock_codes
-        }
+            # Not enough tradable stocks on this date -> stay in cash
+            # for this period instead of holding fewer than top_n names.
+            if len(scores) < top_n:
+                continue
+        else:
+            scores = {
+                stock_code: score_fn(
+                    universe,
+                    stock_code,
+                    decision_index,
+                    config.lookback_days,
+                )
+                for stock_code in stock_codes
+            }
 
         selected_stocks = sorted(
             scores, key=scores.get, reverse=True
         )[:top_n]
-
-        entry_index = decision_index + 1
-        exit_index = decision_index + config.holding_days
 
         entry_date = universe.iloc[entry_index]["trade_date"]
         exit_date = universe.iloc[exit_index]["trade_date"]

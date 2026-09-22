@@ -60,6 +60,13 @@ STOP_LOSS_ATR_MULTIPLE = 3.0
 # vs macOS arm64).
 DETERMINISTIC_PARAMS = {"n_jobs": 1, "tree_method": "exact"}
 
+# A window whose model stopped after fewer than this many boosting rounds
+# is treated as near-untrained (CURRENT_STATUS.md items 18/24/25: Window 1
+# gave best_iteration=0 under tree_method="hist" and =1 under "exact", and
+# the old ``== 0`` check missed the latter). Healthy windows stopped at
+# 47~116 rounds, so 10 leaves a wide margin on both sides.
+MIN_RELIABLE_BEST_ITERATION = 10
+
 
 def _row_metrics(trades, holding_days, exit_reasons) -> dict:
     perf = calculate_performance(trades)
@@ -114,11 +121,12 @@ def main() -> None:
         )
         print(f"  best_iteration={trained.best_iteration}")
         window_best_iterations[label] = trained.best_iteration
-        if trained.best_iteration == 0:
+        if trained.best_iteration < MIN_RELIABLE_BEST_ITERATION:
             print(
-                "  ⚠ best_iteration=0 -- near-untrained model (same anomaly as "
-                "CURRENT_STATUS.md item 18's Window1). Treat this window's "
-                "numbers as unreliable, reference only."
+                f"  ⚠ best_iteration={trained.best_iteration} < "
+                f"{MIN_RELIABLE_BEST_ITERATION} -- near-untrained model (same "
+                "anomaly as CURRENT_STATUS.md item 18's Window1). Treat this "
+                "window's numbers as unreliable, reference only."
             )
 
         predictions = predictions_for_dataset(trained, splits.validation)
@@ -195,9 +203,16 @@ def main() -> None:
     print("\n" + "=" * 100)
     print("SUMMARY ACROSS WINDOWS")
     print("=" * 100)
-    unreliable = [label for label, it in window_best_iterations.items() if it == 0]
+    unreliable = [
+        label
+        for label, it in window_best_iterations.items()
+        if it < MIN_RELIABLE_BEST_ITERATION
+    ]
     if unreliable:
-        print(f"\n⚠ Excluding from the vote count (best_iteration=0): {unreliable}")
+        print(
+            f"\n⚠ Excluding from the vote count "
+            f"(best_iteration < {MIN_RELIABLE_BEST_ITERATION}): {unreliable}"
+        )
     reliable_labels = [label for label in all_results if label not in unreliable]
 
     print(

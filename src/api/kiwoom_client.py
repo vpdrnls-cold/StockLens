@@ -76,6 +76,7 @@ class KiwoomClient:
     _TOKEN_PATH = "/oauth2/token"
     _STOCK_INFO_PATH = "/api/dostk/stkinfo"
     _DAILY_CHART_PATH = "/api/dostk/chart"
+    _SECTOR_PATH = "/api/dostk/sect"
     _JSON_CONTENT_TYPE = "application/json;charset=UTF-8"
 
     # Kiwoom returns HTTP 429 (return_code=5, "허용된 요청 개수를
@@ -277,6 +278,71 @@ class KiwoomClient:
 
         merged_response["stk_dt_pole_chart_qry"] = all_rows
         return merged_response
+
+    def get_index_constituents(
+        self,
+        inds_cd: str = "201",
+        *,
+        market_type: str = "2",
+        exchange_type: str = "1",
+        max_pages: int = 20,
+    ) -> list[Mapping[str, Any]]:
+        """Return the ``ka20002`` (업종별주가) rows for one index/sector.
+
+        The defaults request KOSPI200 (``mrkt_tp="2"``, ``inds_cd="201"``)
+        on KRX (``stex_tp="1"``) as documented in
+        ``config/kiwoom-rest-api-spec.json``. Continuation pages
+        (``cont-yn`` / ``next-key``) are followed automatically, the same
+        way ``get_daily_chart`` does.
+        """
+        token = self.authenticate()
+        payload = {
+            "mrkt_tp": market_type,
+            "inds_cd": inds_cd,
+            "stex_tp": exchange_type,
+        }
+
+        rows: list[Mapping[str, Any]] = []
+        cont_yn = "N"
+        next_key = ""
+
+        for page in range(max_pages):
+            if page > 0:
+                time.sleep(self._PAGE_REQUEST_INTERVAL_SECONDS)
+
+            headers = self._json_headers(
+                **{
+                    "api-id": "ka20002",
+                    "authorization": f"Bearer {token.value}",
+                    "cont-yn": cont_yn,
+                    "next-key": next_key,
+                }
+            )
+            response, response_headers = self._post(
+                self._SECTOR_PATH,
+                payload,
+                headers,
+                stage="index_constituents",
+            )
+
+            page_rows = response.get("inds_stkpc", [])
+            if not isinstance(page_rows, list):
+                raise KiwoomTransportError("inds_stkpc must be a list.")
+            rows.extend(page_rows)
+
+            cont_yn = str(response_headers.get("cont-yn", "N")).strip().upper()
+            next_key = str(response_headers.get("next-key", "")).strip()
+            if cont_yn != "Y" or not next_key or not page_rows:
+                break
+        else:
+            logger.warning(
+                "Kiwoom index_constituents inds_cd=%s stopped at max_pages=%d "
+                "with continuation still available -- list may be incomplete.",
+                inds_cd,
+                max_pages,
+            )
+
+        return rows
 
     def get_index_daily_chart(
         self,

@@ -52,7 +52,8 @@ def run_baseline_backtest(
 
     ``dataset`` must be in tidy form, with columns ``trade_date``,
     ``stock_code``, ``open_price``, ``close_price`` -- exactly five
-    stock codes, matching ``src.backtest.baseline``'s requirement.
+    stock codes, unless ``config.allow_partial_universe`` is set (see
+    ``src.backtest.baseline``).
 
     ``holding_period`` sets both the lookback window used for scoring
     and the holding period, unless an explicit ``config`` is supplied
@@ -93,6 +94,7 @@ def run_baseline_backtest(
         data_by_stock,
         decision_dates=trades_df["decision_date"],
         lookback_days=config.lookback_days,
+        partial=config.allow_partial_universe,
     )
 
     trades_df = trades_df.merge(
@@ -156,6 +158,7 @@ def _build_rankings(
     data_by_stock: dict[str, pd.DataFrame],
     decision_dates: pd.Series,
     lookback_days: int,
+    partial: bool = False,
 ) -> pd.DataFrame:
     """Rank every stock (not just the winner) at each decision date.
 
@@ -163,7 +166,9 @@ def _build_rankings(
     pick the winner, so rankings are always consistent with trades.
     """
 
-    universe = prepare_universe(data_by_stock)
+    universe = prepare_universe(
+        data_by_stock, how="outer" if partial else "inner"
+    )
     stock_codes = list(data_by_stock.keys())
 
     date_to_index = {
@@ -181,6 +186,9 @@ def _build_rankings(
             )
             for stock_code in stock_codes
         }
+        # With a partial universe, stocks that are not yet listed on
+        # this date have NaN scores and are simply not ranked.
+        scores = {code: score for code, score in scores.items() if score == score}
 
         ranked = sorted(
             scores.items(), key=lambda item: item[1], reverse=True

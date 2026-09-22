@@ -14,10 +14,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.api import KiwoomClient
 from src.data.ingest import ingest_kiwoom_daily_chart_batch
+from src.data.universe import get_universe
 from src.utils.config import ConfigurationError
 
 
-DEFAULT_STOCK_CODES = ("005930", "000660", "005380", "035420", "035720")
+# core5 by default; STOCKLENS_UNIVERSE=top50 ingests the 50-stock universe.
+DEFAULT_STOCK_CODES = get_universe()
 
 
 def main() -> int:
@@ -28,7 +30,7 @@ def main() -> int:
         "stock_codes",
         nargs="*",
         default=DEFAULT_STOCK_CODES,
-        help="Stock codes to ingest; defaults to the five validated Korean symbols.",
+        help="Stock codes to ingest; defaults to the selected universe (STOCKLENS_UNIVERSE).",
     )
     parser.add_argument(
         "--base-date",

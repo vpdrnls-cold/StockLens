@@ -8,16 +8,13 @@ import pandas as pd
 from src.backtest.baseline import BaselineConfig
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
+from src.data.universe import get_universe
 from src.ml.backtest import run_baseline_backtest
 
 
-STOCK_CODES = (
-    "000660",
-    "005380",
-    "005930",
-    "035420",
-    "035720",
-)
+# core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe
+# (see src/data/universe.py).
+STOCK_CODES = get_universe()
 
 
 def main() -> None:
@@ -74,6 +71,7 @@ def main() -> None:
         sell_tax=0.0020,
         buy_slippage=0.0010,
         sell_slippage=0.0010,
+        allow_partial_universe=len(STOCK_CODES) != 5,
     )
 
     result = run_baseline_backtest(

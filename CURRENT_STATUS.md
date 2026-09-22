@@ -1,560 +1,207 @@
 StockLens Current Project Status
 
-  This file is a mutable project-state record. Update it whenever a
-  meaningful implementation task is completed. Do NOT use this file as
-  the permanent project rulebook. Permanent development rules belong in
-  AGENTS.md.
+  이 파일은 변경 가능한 프로젝트 상태 기록이다. 의미 있는 구현 작업이
+  끝날 때마다 갱신한다. 영구적인 개발 규칙은 이 파일이 아니라
+  AGENTS.md에 둔다.
 
 ------------------------------------------------------------------------
 
 1. Current Project Goal
 
-StockLens is being developed as a personalized stock analysis and
-recommendation system.
+StockLens는 개인화된 주식 분석/추천 시스템으로 개발 중이다.
 
-The eventual product goal is:
+최종 제품 목표:
 
-User investment-profile questionnaire → analyze stocks using available
-market information → produce stock-level signals/predictions →
-personalize ranking according to the user’s investment style → return a
-Top 5 recommendation with explanations.
+사용자 투자성향 설문 → 시장 정보로 종목 분석 → 종목별 신호/예측 생성 →
+사용자 투자성향에 맞게 개인화 랭킹 → 설명이 포함된 Top 5 추천 +
+보유 종목 HOLD/SELL 판단.
 
-The final vision may later include intraday data, news, macroeconomic
-data, and user-behavior feedback.
-
-However, these are NOT part of the current MVP implementation scope.
+인트라데이, 뉴스, 매크로, 사용자 행동 피드백은 최종 비전에 포함되지만
+현재 구현 범위(MVP)는 아니다.
 
 ------------------------------------------------------------------------
 
-2. Current MVP Scope
+2. Current MVP Scope and Verdict
 
-The current MVP is intentionally limited.
+MVP 질문:
 
-MVP target
+일별 OHLCV에서 만든 기술적 feature가 out-of-sample에서 유의미한 예측
+신호를 만들고, 단순 규칙 기반 baseline보다 나은가?
 
-Build and evaluate a daily OHLCV-based stock analysis / prediction
-pipeline that can answer:
+MVP 평가 결과(항목 14, 15, 24, 25 기준): 현재로선 **아니오**.
 
-  Can technically engineered features from historical daily stock data
-  produce a useful out-of-sample predictive signal, and can an ML model
-  perform meaningfully compared with a simple rule-based baseline?
+-   ML 전략(19개 scale-free feature, XGBoost)은 테스트 구간(2023-07~
+    2026-09)에서 룰베이스 모멘텀 baseline(+24.08%)을 넘지 못함
+    (+3.42% 수준).
+-   cross-sectional rank IC는 validation 기준 +0.01~+0.04 수준으로 0에
+    가까움.
+-   Filter/Wrapper/Embedded 재실행 결과, 3개 walk-forward 구간에서
+    안정적으로 반복되는 feature 조합이 없음. 19개 전체를 유지.
+-   따라서 daily 기술 feature만으로는 baseline을 안정적으로 이기는
+    신호가 확인되지 않았고, 원인 후보로 5종목 유니버스의 통계적 한계가
+    있음(아직 검증 전).
 
-The MVP ends at:
-
--   reliable historical daily data
--   deterministic technical feature engineering
--   clearly defined prediction target
--   leakage-safe temporal dataset construction
--   rule-based baseline
--   feature selection
--   ML model
--   out-of-sample evaluation / comparison against the baseline
-
-Do NOT expand into intraday, news, macro, personalization, or real-time
-architecture before the MVP has been properly evaluated, unless the
-project scope is explicitly changed.
+범위 확장 이력: 항목 16에서 최종 산출물의 소비자 레이어(개인화 재랭킹,
+HOLD/SELL 판단, Explanation)를 신호 데이터 소스 확장(Phase H~J)보다
+먼저 구현하기로 순서를 조정했다. 이 레이어들은 신호가 무엇이든 그 위에
+얹히는 구조이며, 인트라데이/뉴스/매크로는 여전히 범위 밖이다.
 
 ------------------------------------------------------------------------
 
 3. Completed Work
 
-3.1 Kiwoom REST API Integration
+3.1 Kiwoom REST API 연동 — 완료
 
-Status: COMPLETE
+-   인증, 현재가 조회, 일봉(ka10081) 조회, 응답 정규화, 에러 처리
+-   `cont-yn`/`next-key` 자동 pagination, rate-limit retry/backoff
+-   mock 응답 기반 테스트, 실제 API 통신 검증 완료
 
-Implemented and verified:
+3.2 일별 과거 데이터 수집 — 완료
 
--   Kiwoom authentication
--   production REST API communication
--   current stock quote retrieval
--   daily chart retrieval (ka10081)
--   API response handling / normalization
--   API error handling
--   diagnostic handling
--   tests using mocked responses
+-   core5(기본 유니버스): 000660, 005380, 005930, 035420, 035720
+-   top50(KOSPI200 시가총액 상위 50, 항목 28): `config/universe_kospi200_top50.json`을
+    `scripts/build_universe.py`로 생성한 뒤 `STOCKLENS_UNIVERSE=top50`으로 선택.
+    데이터 수집은 미완료.
+-   종목당 약 6k~11k bar(약 23~44년), 2002-10 ~ 2026-09
+-   분할: train 2002-10-29~2019-12-31 / validation 2020-01-01~
+    2023-06-30 / test 2023-07-01~2026-09-16
+    (`src/data/dataset.py`가 분할 상수의 단일 기준)
 
-Real API communication has been successfully verified.
+3.3 데이터 품질 유의사항
 
-------------------------------------------------------------------------
+장중에 ka10081을 호출하면 당일 미완성 캔들이 포함될 수 있다. 학습/백테스트는
+완성된 일봉만 사용한다. 실시간 추론에서는 예측 시점이 명시적으로 정의된
+경우에 한해 진행 중인 캔들을 쓸 수 있으므로, "항상 전일 데이터만 사용"이라는
+일괄 규칙은 두지 않는다.
 
-3.2 Daily Historical Data Collection
+3.4 Feature Engineering — 완료
 
-Status: COMPLETE, subject to data-quality verification/recollection
+-   `FEATURE_COLUMNS` 27개(원래 25개 + `atr_pct`, `macd_hist_pct`)
+-   그중 raw price-scale 8개(`sma_5, sma_20, sma_60, macd, macd_signal,
+    macd_hist, atr_14, volume_sma_20`)를 제외한 scale-free 19개가 현재
+    `SELECTED_FEATURES`(임시 확장, 항목 14). 정식 선택 결과가 아니라
+    "더 좁힐 근거가 없어 전체 유지"한 상태(항목 15).
+-   pooled 다종목 모델에서는 scale-free feature만 사용해야 함(항목 14 교훈).
 
-Five stocks have been collected:
+3.5 Baseline / ML / 백테스트 — 완료
 
--   000660
--   005380
--   005930
--   035420
--   035720
+-   룰베이스 모멘텀 baseline과 공용 백테스트 엔진 `src/backtest/baseline.py`
+    (`src/ml/backtest.py`는 이를 호출하는 얇은 어댑터)
+-   XGBoost 일별 모델(`src/models/predict.py`), early stopping,
+    cross-sectional rank IC 평가
+-   leakage 방지: `src/feature_selection/data_loading.py`(분할 강제)
+-   재현성: walk-forward/실험 스크립트는 `tree_method="exact"`,
+    `n_jobs=1` 고정 시 두 기기(Linux x86_64 / macOS arm64)에서 비트 단위
+    일치 확인(항목 23~25). 전역 `DEFAULT_PARAMS`는 아직 `hist` 유지.
 
-Most recent observed dataset size:
+3.6 소비자 레이어 — 구현됨(라이브러리 수준)
 
--   approximately 601 daily bars per stock
--   approximately 2024-03-13 through 2026-09-01
+-   개인화 재랭킹 `src/recommendation/scoring.py`(항목 16)
+-   HOLD/SELL 판단 `src/portfolio/optimizer.py`: 기본값은 손절
+    3.0x ATR%만 활성. signal-reversal(absolute/percentile)은 walk-forward
+    검증 실패로 opt-in 전용(항목 17~26)
+-   Explanation `src/explanation/`(항목 19), 한국어 텍스트 출력
+-   CLI/API 진입점(`app.py`)에는 아직 연결되지 않음(스캐폴드 상태)
 
-The exact range/row count may change after historical-data cleanup.
-
-------------------------------------------------------------------------
-
-3.3 Important Data-Quality Discovery
-
-Status: DISCOVERED / NEEDS TO BE ACCOUNTED FOR
-
-A ka10081 daily-chart request made during market hours can contain the
-current day’s incomplete candle.
-
-Example:
-
-An API response observed during 2026-08-31 contained a still-forming
-daily candle whose OHLCV differed from the final completed 2026-08-31
-candle.
-
-This is expected behavior for a real-time/current-date request and is
-NOT evidence that the Kiwoom API is necessarily incorrect.
-
-Required distinction:
-
-Historical training/backtesting
-
-Use completed daily candles unless the model explicitly simulates an
-intraday decision timestamp.
-
-Real-time inference
-
-A future version of StockLens may use the current in-progress candle
-when the prediction is explicitly defined at that current timestamp.
-
-Therefore, do NOT impose a blanket rule that the live system must always
-use yesterday’s data.
+3.7 테스트 — 전체 136개 통과(`pytest.ini`로 `tests/`만 수집)
 
 ------------------------------------------------------------------------
 
-4. Current Feature Engineering
+4. Known Open Issues
 
-Status: COMPLETE
-
-Current daily technical feature pipeline produces approximately 25
-features.
-
-Returns
-
--   return_1d
--   return_5d
--   return_10d
--   return_20d
-
-Price / Candle
-
--   intraday_return
--   high_low_range
--   gap
-
-Trend
-
--   sma_5
--   sma_20
--   sma_60
--   price_to_sma_5
--   price_to_sma_20
--   price_to_sma_60
-
-Momentum
-
--   rsi_14
--   roc_10
--   roc_20
--   macd
--   macd_signal
--   macd_hist
-
-Volatility
-
--   volatility_5
--   volatility_20
--   atr_14
-
-Volume
-
--   volume_change_1d
--   volume_sma_20
--   volume_ratio_20
-
-Tests exist for important feature calculations, date ordering, returns,
-moving averages, and warm-up NaNs.
+-   Window1(train ..2011, val 2012~2015) 모델이 `best_iteration` 0~1로 사실상
+    미학습됨. 원인 미조사(항목 18, 20, 24). walk-forward 스크립트는
+    `best_iteration < 10`이면 해당 구간을 신뢰 불가로 제외(항목 27).
+-   `walk_forward_position_thresholds.py`는 아직 미학습 구간 제외 로직이
+    없고 경고 출력만 함.
+-   전역 `DEFAULT_PARAMS`를 `tree_method="exact"`로 바꿀지 미결정. 단일 split에서
+    IC가 +0.0289 → +0.0113으로 하락한 신호가 있어 walk-forward 검증 필요(항목 23).
+-   5종목 유니버스: 날짜당 랭킹 표본이 5개라 rank IC 분산이 크고, percentile
+    규칙의 granularity가 20%로 제한됨. 유니버스 확장 필요 여부가 다음 핵심 판단.
+    (항목 28에서 확장 인프라 구현 완료, 데이터 수집 후 평가 대기)
+-   생존편향(AGENTS.md 23절): core5와 top50 모두 "현재 시점의 대형주"라서, 과거 구간
+    성과의 절대 수치는 낙관적. ML vs 모멘텀의 상대 비교만 신뢰.
+-   HOLD/SELL 실험 스크립트(`evaluate_position_thresholds.py`, `walk_forward_position_
+    thresholds.py`, `evaluate_signal_reversal_thresholds.py`, `walk_forward_signal_
+    reversal.py`)는 아직 core5 전용. 자체 결정 그리드가 공통 날짜 inner join에 의존하며
+    partial 유니버스는 미지원.
 
 ------------------------------------------------------------------------
 
-5. Current Dataset / ML Status
+5. Next Steps (우선순위 순)
 
-Status: NOT YET READY FOR FINAL FEATURE SELECTION
-
-The technical features exist, but the ML problem must be finalized
-before blindly applying Feature Selection.
-
-Still to define/verify:
-
-1.  Prediction target
-2.  Prediction horizon
-3.  Exact decision timestamp
-4.  Label construction
-5.  Historical information availability
-6.  Temporal train/validation/test split
-7.  Leakage-safe preprocessing
-8.  Rule-based baseline definition
-9.  Evaluation metrics
-10. Backtesting assumptions
-
-Do NOT select features using the entire dataset before these decisions
-are established.
+1.  유니버스 확장(KOSPI200 시총 상위 50): 인프라 완료(항목 28). 남은 일: (a)
+    `build_universe.py`로 종목 확정, (b) `ingest_kiwoom_daily_chart_batch.py`로 수집,
+    (c) `check_data_coverage.py`로 종목별 이력 확인, (d) `tree_method="exact"` 기준
+    IC·백테스트를 3개 walk-forward 구간에서 재평가(top_n은 5~10도 함께 확인).
+2.  Window1 `best_iteration` 이상 원인 조사.
+3.  모델링 방향 재검토: rank/분류 타겟, 모멘텀과 ML 점수의 앙상블.
+4.  위 1~3 이후에도 daily 기술 feature로 안 되면 Phase H~J(인트라데이,
+    뉴스, 매크로).
+5.  Explanation 레이어를 CLI/API 진입점에 연결(신호가 약한 동안은 낮은 우선순위).
 
 ------------------------------------------------------------------------
 
-6. Immediate Next Work
+6. Future Work, NOT CURRENT SCOPE
 
-The next work should be performed in this order.
+구현되지 않았음. 최종 비전에만 있음.
 
-Step 1. Verify historical data quality
-
-Check that the historical dataset contains only appropriate completed
-bars for the intended daily decision model.
-
-Check:
-
--   duplicate dates
--   missing dates
--   malformed values
--   impossible OHLC relationships
--   incomplete current-day bars
--   data consistency across the five stocks
-
-If necessary, recollect the historical dataset.
-
-------------------------------------------------------------------------
-
-Step 2. Define the prediction problem
-
-Explicitly decide:
-
-Decision timestamp
-
-Example:
-
-“After the daily market close.”
-
-or another explicitly defined time.
-
-Target
-
-Possible examples:
-
--   next-day return
--   future N-day return
--   probability of positive future return
--   threshold-exceedance probability
-
-Horizon
-
-Possible examples:
-
--   next trading day
--   next 5 trading days
--   next 20 trading days
-
-Do not choose arbitrarily.
-
-The target/horizon must make sense for the intended MVP.
+-   Intraday: Kiwoom 분봉(1/3/5/10/15/30/45/60분). 일봉으로 분봉을 복원할 수 없음.
+-   News: 뉴스량, 감성, 이벤트 유형/강도, 관련성, 최신성. 과거 뉴스는 실제로
+    확인 가능했던 시각에 맞춰 정렬해야 함.
+-   Macro: 금리, USD/KRW, 유가, 금, KOSPI/KOSDAQ, 해외 지수. 시점 정렬 필수.
+-   Integrated model: daily + intraday + news + macro → 통합 스코어링. 새 데이터
+    소스 추가 시 재학습이 필요할 수 있음. 현재 daily 모델은 baseline/구성요소로
+    재사용 가능.
+-   Real-time recommendation: 실행 시점의 시장 스냅샷 → feature 갱신 → 예측 →
+    개인화 → Top 5 → 설명. 과거 학습 데이터는 각 시점에 실제로 존재했던
+    정보만 사용해야 함.
+-   User feedback / outcome learning: 추천 → 사용자 선택 → 보유/청산 결과 →
+    선호 학습. 한 번의 거래 결과로 시장 예측 모델을 바로 바꾸지 않으며,
+    시장 예측과 사용자 선호 학습은 개념적으로 분리한다.
+-   설문 기반 개인화(Phase L)의 사용자 프로필 수집 흐름: 현재는 프로필이 코드
+    상수(`PROFILES`)로만 존재함.
 
 ------------------------------------------------------------------------
 
-Step 3. Build the leakage-safe dataset
+7. Current Project Position
 
-Construct:
-
-Features at time t → target representing future outcome after t
-
-Ensure:
-
--   no future price information in features
--   no future volume
--   no future labels
--   no future-derived normalization
--   no random time-series shuffling
--   preprocessing fitted only using appropriate training data
-
-------------------------------------------------------------------------
-
-Step 4. Establish Rule-Based Baseline
-
-Create a simple explainable baseline before complex ML.
-
-The baseline should rank stocks using a transparent set of technical
-signals.
-
-Exact weights/rules should be treated as experimental parameters and
-evaluated rather than assumed to be optimal.
+Kiwoom API → 완료
+일별 과거 데이터 → 완료(5종목, 2002~2026)
+Daily feature engineering → 완료(27개, 그중 19개 사용)
+예측 문제 정의(target_return_5d, 5일 horizon) → 완료
+Rule-based baseline → 완료
+Feature Selection → 수행 완료, 안정적 개선 없음(항목 15)
+ML 모델 → 구현 완료, baseline 미달(항목 14, 15)
+Out-of-sample 평가 → 수행 완료(테스트 구간은 최종 확인용으로만 사용)
+재현성 → 해결(항목 23~25)
+개인화 / HOLD-SELL / Explanation → 라이브러리 수준 구현 완료
+MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신호 미확인)
+유니버스 확장, Phase H~J → 다음 단계
 
 ------------------------------------------------------------------------
 
-Step 5. Temporal Split
+8. Current Priority
 
-Use chronological train/validation/test separation.
+당장의 우선순위는 인트라데이 수집, 뉴스/매크로 API, 실시간 아키텍처, UI가
+아니다. 우선순위는 "현재 신호가 약한 이유가 5종목 표본의 한계인지, 신호
+자체의 부재인지"를 유니버스 확장으로 가려내는 것이다.
 
-Do not randomly shuffle ordinary time-series observations.
-
-Keep the final test period as an out-of-sample evaluation set.
-
-------------------------------------------------------------------------
-
-Step 6. Feature Selection
-
-Only after Steps 1-5 are sufficiently defined.
-
-Initial Filter Method candidates:
-
--   missingness / constant checks
--   feature-target correlation
--   mutual information
--   feature-feature correlation
--   redundancy removal
--   temporal stability
-
-Feature Selection must be fitted/decided using training information
-only.
-
-Do NOT use the final test set to choose features.
-
-------------------------------------------------------------------------
-
-Step 7. ML Model
-
-Train a reproducible ML model using the selected features.
-
-Evaluate:
-
--   validation performance
--   untouched test performance
--   recommendation usefulness where applicable
--   comparison with the rule-based baseline
-
-Do not claim success from training accuracy.
-
-------------------------------------------------------------------------
-
-Step 8. MVP Evaluation
-
-The MVP is complete only when we can answer:
-
--   Does the model generalize out of sample?
--   Does it beat or meaningfully complement the rule-based baseline?
--   Is the improvement stable?
--   Does it produce useful ranking/recommendation behavior?
--   Are the results robust to reasonable evaluation assumptions?
--   Is there any remaining leakage or data-quality issue?
-
-If the answer is no, diagnose and improve the MVP before expanding
-scope.
-
-------------------------------------------------------------------------
-
-7. Future Work, NOT CURRENT SCOPE
-
-These are possible post-MVP extensions.
-
-They should not be treated as currently implemented.
-
-Intraday
-
-Kiwoom provides separate minute-chart data.
-
-Potential future data:
-
--   1-minute
--   3-minute
--   5-minute
--   10-minute
--   15-minute
--   30-minute
--   45-minute
--   60-minute
-
-Daily bars cannot be reconstructed into exact minute bars.
-
-Intraday data would support:
-
--   current momentum
--   short-term volatility
--   unusual volume
--   short-horizon prediction
-
-------------------------------------------------------------------------
-
-News
-
-Potential future signals:
-
--   news volume
--   sentiment
--   event type
--   event severity
--   relevance
--   recency
-
-Historical news must be aligned to the actual time it was available.
-
-------------------------------------------------------------------------
-
-Macro / Market Data
-
-Potential future inputs:
-
--   interest rates
--   USD/KRW
--   oil
--   gold
--   KOSPI/KOSDAQ
--   global indices
--   other useful macro variables
-
-Historical availability/timestamps must be respected.
-
-------------------------------------------------------------------------
-
-Integrated Model
-
-Future architecture may combine:
-
-Daily features + Intraday features + News signals + Macro signals →
-integrated prediction/scoring → recommendation ranking.
-
-The current daily model is not wasted if this happens.
-
-It can become:
-
--   a baseline
--   a daily/medium-term signal
--   a component of the final model
--   a source of features/signals
-
-The final integrated model may require retraining after new data sources
-are added.
-
-------------------------------------------------------------------------
-
-Personalization
-
-Future system:
-
-Questionnaire → initial user profile → personalized ranking.
-
-Later, if sufficient data is collected:
-
-User actions / preferences / outcomes → observed behavioral profile →
-refined personalization.
-
-The system should not force every user to receive different stocks.
-
-The objective is to rank stocks appropriately for each user, even if
-some users receive overlapping recommendations.
-
-------------------------------------------------------------------------
-
-Real-Time Recommendation
-
-Future target behavior:
-
-User runs StockLens at a specific current time → current market snapshot
-→ latest available external information → feature update →
-prediction/scoring → personalization → Top 5 → explanation.
-
-Real-time inference may use an in-progress candle if the prediction
-problem is explicitly defined at that timestamp.
-
-Historical training must still respect the information set that would
-have existed at each historical timestamp.
-
-------------------------------------------------------------------------
-
-User Feedback / Outcome Learning
-
-Potential future feedback loop:
-
-Recommendation → user views/chooses → optional purchase/position
-information → holding period → exit → return / drawdown / outcome →
-observed preference → personalization update.
-
-Do NOT immediately change the market prediction model after one
-successful or failed trade.
-
-User behavior is noisy.
-
-Market prediction and user-preference learning should remain
-conceptually separate.
-
-------------------------------------------------------------------------
-
-8. Current Project Position
-
-Current state:
-
-Kiwoom API → COMPLETE
-
-Historical daily data → COLLECTED / DATA QUALITY VERIFICATION NEEDED
-
-Daily feature engineering → COMPLETE
-
-Prediction problem → CURRENT NEXT DESIGN TASK
-
-Rule-based baseline → NOT YET COMPLETE
-
-Feature Selection → NOT YET STARTED
-
-ML model → NOT YET STARTED
-
-Out-of-sample evaluation → NOT YET STARTED
-
-MVP completion → NOT YET REACHED
-
-Post-MVP intraday/news/macro/personalization/real-time → FUTURE ONLY
-
-------------------------------------------------------------------------
-
-9. Current Priority
-
-The immediate priority is NOT:
-
--   minute data collection
--   news APIs
--   macro APIs
--   real-time architecture
--   user behavior learning
--   sophisticated personalization
--   complex model ensembles
-
-The immediate priority is:
-
-Historical data validation → prediction target → decision timestamp →
-leakage-safe dataset → rule-based baseline → temporal evaluation design
-→ Feature Selection → ML → out-of-sample comparison.
-
-Do not expand scope merely because the final product vision contains
-those capabilities.
+최종 비전에 있다는 이유만으로 범위를 넓히지 않는다.
 
 ------------------------------------------------------------------------
 
 10. Update Policy
 
-Whenever a meaningful project task is completed:
+의미 있는 작업이 끝날 때마다:
 
-1.  Update this file.
-2.  Move the relevant item from “next” to “completed.”
-3.  Record important discoveries or unresolved issues.
-4.  Keep future ideas clearly separated from implemented functionality.
-5.  Do not rewrite AGENTS.md just to update progress.
-
-This file should remain a concise, machine-readable snapshot of the
-current implementation state.
+1.  이 파일을 갱신한다.
+2.  "다음 단계"의 항목을 "완료"로 옮긴다.
+3.  중요한 발견과 미해결 이슈를 기록한다.
+4.  미래 아이디어와 구현된 기능을 명확히 분리한다.
+5.  진행 상황 갱신만을 위해 AGENTS.md를 고치지 않는다.
+6.  아래 항목 11번부터는 시간순 작업 로그다. 새 작업은 마지막에 번호를 이어서
+    추가하고, 위의 요약 절(1~8)도 함께 최신 상태로 맞춘다.
 
 11. **평가지표(Metrics) 구현 및 테스트 완료**
 - ML 모델의 예측 성능을 평가하기 위한 기본 회귀 평가지표를 구현함.
@@ -703,3 +350,70 @@ current implementation state.
 - **회귀 검증**: 전체 테스트 136개(신규 1개 포함) 통과. `scripts/demo_explanation.py` 재실행해서 정상 동작 확인(손절 SELL 예시 그대로 출력).
 - **결론**: `PositionConfig()` 기본값은 이제 손절(3.0x ATR)만 활성화된 상태 — absolute·percentile 두 signal-reversal 변형 모두 명시적 opt-in 전용이며 프로덕션 기본값에서 완전히 제외됨. 이 모듈에서 실제로 백테스트로 뒷받침되는 규칙은 손절뿐이라는 게 이 프로젝트의 정직한 현재 상태.
 - **다음 단계(미완료)**: (1) `walk_forward_signal_reversal.py`의 Window1류 "사실상 미학습" 구간 필터 로직 보강(`best_iteration==0`만 거르고 `==1`은 못 거름, 여전히 미수정). (2) signal-reversal 자체를 다른 방식으로 재설계할지(예: 더 큰 유니버스, 다른 타겟, 다른 모델)는 열린 질문으로 남김 — 당장 급한 작업은 아님. (3) explanation/UI 레이어를 CLI/API에 연결(항목 19의 미완료 1번)은 계속 대기.
+
+27. **병행 정리 작업: 미학습 구간 필터 보강, 상태 문서/의존성/잔여 파일 정리**
+
+- `scripts/walk_forward_signal_reversal.py`: 미학습 구간 판정을 `best_iteration == 0`에서 `best_iteration < MIN_RELIABLE_BEST_ITERATION`(=10)으로 변경. 항목 24/25에서 `tree_method="exact"` 전환 후 Window1이 `best_iteration=1`로 나와 기존 필터를 통과하던 문제를 해소. 정상 구간은 47~116 라운드에서 멈췄으므로 10은 양쪽에 충분한 여유가 있음. 경고 문구와 요약 출력도 실제 값과 기준을 함께 표시하도록 수정. 결과는 Window1이 제외되고 Window2·3만 집계되어야 하며, 기존 항목 25의 수동 제외 결과와 일치해야 함(재훈 기기에서 재실행 확인 필요).
+- `CURRENT_STATUS.md`: 1~10절이 "Feature Selection/ML 시작 전" 상태로 남아 항목 14~26과 모순되던 문제를 수정. 1~9절을 현재 상태(MVP 평가 결과, 완료 작업, 미해결 이슈, 다음 단계, 위치)로 다시 작성하고, 항목 11번 이후 로그는 그대로 유지.
+- `stocklens_walk_forward_stop_loss.patch` 삭제: 항목 16~18 시점의 패치 파일로, 대상 파일(`walk_forward_position_thresholds.py` 등)이 이미 저장소에 반영되어 있고 참조하는 곳이 없음.
+- `requirements.txt`: `xgboost`, `numpy`, `pandas` 버전을 항목 23에서 확인한 재훈 기기(macOS arm64) 환경 기준으로 고정. 나머지 패키지는 그대로.
+- 미착수: `app.py`와 Explanation 레이어 연결(신호가 약한 동안은 낮은 우선순위), `walk_forward_position_thresholds.py`의 미학습 구간 제외 로직.
+
+28. **유니버스 확장 인프라 구현 (KOSPI200 시총 상위 50 대응)**
+
+- **발견한 구조적 제약**: 백테스트 엔진(`src/backtest/baseline.py`)이 (a) 종목 수를 정확히 5개로 강제하고 (b) 모든 종목의 날짜를 inner join한 공통 구간만 사용했음. 종목만 50개로 늘리면 (b) 때문에 사용 가능한 이력이 가장 늦게 상장한 종목 기준으로 줄어들 수 있었음(예: 2022년 상장 종목이 하나라도 있으면 백테스트 구간이 그 이후로 제한). 따라서 종목 추가 전에 엔진 확장이 필요했음.
+- **엔진**: `BaselineConfig.allow_partial_universe`(기본 `False`) 추가. `False`면 기존 동작 그대로(5종목 강제, inner join)라서 항목 14~26의 모든 기록 수치가 그대로 재현됨. `True`면 종목 수 제한이 없고, 날짜는 outer join하며, 각 결정일에 그 거래에 필요한 가격(T-lookback 종가, T 종가, T+1 시가, T+holding 종가)이 모두 있고 score_fn이 유한한 점수를 내는 종목만 랭킹함. 모델 score_fn이 예측 없음(`KeyError`, feature warm-up)을 내는 종목도 제외. 거래 가능 종목이 `top_n`보다 적은 날은 그 기간 현금 보유로 건너뜀. `src/ml/backtest.py`의 랭킹 계산도 동일하게 처리.
+- **유니버스 모듈**: `src/data/universe.py` 신규. `get_universe()`가 환경변수 `STOCKLENS_UNIVERSE`(기본 `core5`, 또는 `top50`)로 종목 목록을 결정. 종목 목록은 손으로 쓰지 않고 `scripts/build_universe.py`가 Kiwoom API로 생성: `ka20002`(KOSPI200 구성종목) → 종목별 `ka10001`의 시가총액(`mac`, 억원) → 우선주(코드가 0으로 끝나지 않는 종목) 제외 후 상위 N개를 `config/universe_kospi200_top50.json`에 `as_of` 날짜와 함께 저장. 시가총액 순위는 자주 바뀌므로(2026년에 SK하이닉스가 1위로 올라선 것처럼) 임의로 하드코딩하지 않고 실행 시점의 값을 기록하도록 함. `KiwoomClient.get_index_constituents()`(cont-yn/next-key 자동 처리) 추가.
+- **스크립트 전환**: `ingest_kiwoom_daily_chart_batch.py`, `build_ml_dataset.py`, `check_data_coverage.py`, `run_backtest.py`, `run_ml_backtest.py`, `feature_selection_ic_rerun.py`, `walk_forward_wrapper.py`가 `get_universe()`를 사용. 기본값은 core5라 아무것도 안 바꾸면 기존과 동일. `run_ml_backtest.py`의 `TOP_N`은 `STOCKLENS_TOP_N` 환경변수로 덮어쓸 수 있음(50종목에서 top_n=2는 매우 집중적).
+- **테스트**: 136 → 150개 통과. 신규: `tests/test_backtest_partial_universe.py`(5종목 공통 달력에서 partial과 기본 결과가 완전히 동일, 늦게 상장한 종목이 이력을 줄이지 않음, lookback 이력 전에는 랭킹 제외, 거래 가능 종목 < top_n이면 건너뜀, 예측 없는 종목 제외, 랭킹 산출), `tests/test_universe.py`, `tests/test_kiwoom_index_constituents.py`. 합성 50종목×6000일 백테스트는 약 11초.
+- **알려진 한계**: (1) 실제 Kiwoom API로는 아직 실행하지 않음(`ka20002`의 응답 필드는 API 명세 기준으로 작성). (2) top50은 현재 시점 기준 대형주라 과거 구간에 생존편향이 있음(AGENTS.md 23절). (3) HOLD/SELL 실험 스크립트 4종은 core5 전용으로 남김. (4) exact 트리 학습은 학습 행이 약 10배가 되어 fit 1회가 수십 초 단위로 늘어날 수 있음 — `walk_forward_wrapper.py`처럼 fit이 많은 스크립트는 수 시간이 걸릴 수 있음.
+- **보안 조치**: `.env.example`에 실제 키/계좌번호로 보이는 값이 들어 있어 플레이스홀더로 교체. 이미 공개 저장소 이력에 남아 있으므로 키 재발급이 필요함.
+- **다음 단계**: `build_universe.py` 실행 → 종목 확정 → 수집 → 커버리지 확인 → 평가(위 5절 1번).
+
+29. **top50 수집 결과: 48/50 성공, 기아(000270)·삼성전기(009150) 실패 → 1990년 이전 OHLC 불일치 봉 처리**
+
+- **결과**: `build_universe.py`로 top50 확정(삼성전자, SK하이닉스, SK스퀘어, 삼성전기, LG에너지솔루션, 현대차, ... 현대글로비스), `ingest_kiwoom_daily_chart_batch.py` 수집은 48/50 성공. 실패한 두 종목은 정규화 검증에서 "High price is below open or close on 1986-01-25"(009150), "Low price exceeds open or close on 1985-01-30"(000270)로 종목 전체가 거부됨.
+- **원인**: 수십 년치 수정주가(액면분할·유상증자 반영) 과정에서 1980년대 봉의 시가/종가와 고가/저가가 서로 어긋난 것으로 보임(정확한 원인은 원본 미확인). 이 봉들은 모델이 쓰지 않음 — 학습 구간이 2002-10-29부터이고 rolling feature도 최대 약 60봉만 거슬러 올라감.
+- **조치**: `src/data/normalization.py`에 `LEGACY_OHLC_TOLERANCE_BEFORE = 2000-01-01` 추가. 이 날짜 이전의 OHLC 불일치 봉만 경고 로그와 함께 버리고 나머지는 그대로 저장. 2000-01-01 이후의 같은 불일치는 여전히 예외(기존 엄격한 검증 유지). 중복 날짜, 음수 거래량 등 다른 검증도 그대로. 채워 넣거나 보정하지 않고 버리는 방식이라 조작된 값은 생기지 않음. 테스트 `tests/test_legacy_bar_handling.py` 2개 추가, 전체 152개 통과.
+- **다음 단계**: 두 종목 재수집(`ingest_kiwoom_daily_chart_batch.py 000270 009150`), `check_data_coverage.py`로 50종목 이력 확인.
+
+30. **top50(47~50종목/일) 첫 feature selection 재실행 결과 + IC 계산 편향 수정**
+
+- **유니버스 현황**(항목 29 이후): 50종목 수집 완료. 학습 시작(2003년 초) 시점에 30종목, 검증 구간 47종목, 테스트 구간 50종목이 데이터를 가짐. partial 엔진은 날짜별로 가능한 종목만 랭킹하므로 "50종목 공통 구간 4.6년"은 제약이 아님.
+- **`feature_selection_ic_rerun.py` 결과(검증 구간, n≈865일)**:
+  - 19개 전체 baseline IC **+0.0024**(%days>0 50.46%). 5종목에서 +0.0289였던 값이 사라짐 → 5종목 결과는 표본 잡음이었을 가능성이 높음.
+  - Filter: 단일 feature IC가 전부 -0.025~+0.002. 수익률/추세 계열(`price_to_sma_60`, `return_20d`, `return_10d`, `rsi_14`)이 음수 → 이 유니버스/기간에서 단기 반전(reversal) 성향이 약하게 보임. 표준오차가 대략 0.01(5일 중첩 수익률 고려)이라 -0.025는 약 2SE, 19개 중 최대값이라 다중검정 감안하면 확정 불가.
+  - Wrapper 우승 `('return_20d','return_10d','price_to_sma_60','gap')` IC +0.0566, 그러나 **n=343/865일**. Filter top-8도 n=496.
+  - Embedded: 3개 IC +0.0073, 19개 +0.0027.
+  - Test 1회 확인: IC +0.0168, %days>0 52.77%, **n=415**(테스트 구간 약 800일 중).
+- **평가 편향 발견**: `cross_sectional_ic`가 "그날 모든 종목의 예측값이 동일한 날"(IC 미정의)을 계산에서 **제외**했음. early stopping된 얕은 트리(max_depth=2, 소수 트리) 모델은 feature가 1~4개일 때 모든 종목이 같은 leaf에 들어가 예측이 같아지는 날이 많음 → 모델이 랭킹을 매긴 날(선택된 부분집합, 대략 40%)의 IC만 보고됨. 즉 Wrapper의 +0.0566은 전체 일수 기준이 아니며 다른 후보(n=865)와 공정하게 비교된 값이 아니었음. 미정의 일을 0으로 계산하면 Wrapper는 대략 +0.0566 × 343/865 ≈ +0.022 수준(근사치, 재실행 필요). 기존 `MIN_DAYS=300` 가드는 극단적인 경우만 거름(항목 15의 n=47 사례).
+- **조치**: `scripts/feature_selection_ic_rerun.py`와 `scripts/walk_forward_wrapper.py`의 `cross_sectional_ic`를 "eligible한 모든 날(종목 3개 이상)을 분모로 하고 미정의 일은 IC=0으로 계산"하도록 수정하고, `(mean_ic, pct_pos, n_days, coverage)`를 반환·출력(coverage=IC가 정의된 날의 비율). `pct_pos`도 전체 일수 기준. `tests/test_cross_sectional_ic.py` 3개 추가, 전체 155개 통과. **이 수정 이전의 IC 수치(항목 14~15의 5종목 결과 포함)는 같은 편향을 일부 포함할 수 있음** — 5종목 결과는 n이 크게 줄지 않은 경우가 많아 영향이 작았을 것으로 보이나 재확인하지 않음.
+- **현재 판단**: 아직 `SELECTED_FEATURES`를 바꿀 근거 없음(위 Wrapper 결과는 편향된 비교이며 Test IC도 0에 가까움). 수정된 스크립트로 재실행한 뒤 walk_forward_wrapper로 3개 구간 재현성을 확인해야 함.
+- **다음 단계**: (1) 수정된 두 스크립트 재실행(coverage 확인). (2) `walk_forward_wrapper.py` 3개 구간 재현성 확인, Window1 `best_iteration` 확인. (3) 결과에 따라 모델링 방향(rank/분류 타겟, 모멘텀과의 앙상블, 반전 신호 활용) 결정.
+
+31. **IC 편향 수정 후 top50 재실행 결과: 신호는 여전히 약하고 최근 구간으로 갈수록 사라짐, 소형 모델의 "예측 상수화"가 구조적 문제로 확인**
+
+- **수정된 IC 기준 재실행(검증 2020~2023.06, n=865)**: baseline(19개 전체) IC +0.0024(coverage 99.9%). Filter top-8은 coverage 57.3%, %days>0 31.9%(IC +0.0165)로 소형 모델 특유의 상수 예측 문제가 그대로 나타남. Wrapper 우승 `('return_20d','gap','rsi_14')` IC +0.0278이지만 coverage 60.9%, %days>0 36.5%. Embedded는 coverage 100%지만 IC +0.0073(3개)·+0.0027(19개)로 0 근처.
+- **Test 1회 확인(재실행에서 다시 사용됨)**: Wrapper 우승의 Test IC **+0.0032**, coverage 73.8%, %days>0 36.28% (정의된 날 기준으로 환산하면 36.28/73.8 ≈ 49.2%로 동전던지기). 검증 +0.0278 → 테스트 +0.0032로 붕괴 — 검증 구간에 맞춰진 선택이었음. 편향 수정 전 값(+0.0566 → +0.0168)과 같은 방향. **`SELECTED_FEATURES` 변경 근거 없음(19개 전체 유지).** 이 재실행으로 테스트 구간을 한 번 더 보게 되었으므로(항목 30에서 이미 1회 사용), 이후 이 테스트 결과로는 어떤 설계 결정도 하지 않음(AGENTS.md 13절).
+- **walk-forward(`walk_forward_wrapper.py`, 3개 구간)**: W1(2012~2015) 우승 `('return_5d',)` IC +0.0389(%days>0 56.1%, coverage 96.7%, n=988), W2(2016~2019) `('rsi_14',)` +0.0376(56.5%, coverage 99.1%, n=979), W3(2020~2023.06) 3개 feature +0.0278(coverage 60.9%). 스크립트 기준으로는 `rsi_14`만 2/3 구간 등장. 다만 세 우승 모두 최근 수익률/과매수 계열(return_5d, rsi_14, return_20d)의 "단기 가격 반전" 계열이라는 공통점이 있음. 단, 이 IC는 각 구간에서 19개 feature × 여러 라운드 중 최대값이라 선택 편향(winner's curse)이 있고, 모델의 IC로는 부호를 알 수 없음(표준오차는 대략 0.01, 선택 편향 감안하면 약 2~3SE 수준). 신호 크기는 W1(+0.039) ≈ W2(+0.038) > W3(+0.002, baseline) 순으로 최근으로 갈수록 약해지는 패턴이 항목 15의 관찰(알파 감쇠 가설)과 일치.
+- **구조적 문제 진단**: 모델이 학습 시 raw `target_return_5d`에 RMSE로 fit하고 RMSE로 early stopping하는데, 이 타깃에는 그날 종목들이 함께 움직이는 시장 성분이 분산의 대부분을 차지함. 종목 간 차이(우리가 필요한 신호)는 약해서 RMSE가 몇 트리 만에 개선을 멈추고(early stopping), 그 결과 모든 종목이 같은 leaf로 들어가 예측이 같아지는 날이 많음(coverage < 100%). 이는 항목 18/20/24의 Window1 `best_iteration=0~1` 현상과 같은 원인일 가능성이 높음(미검증).
+- **다음 실험 준비**: `src/ml/cross_section.py`(daily_rank_ic, demean_by_date, rank_by_date), `scripts/diagnose_feature_ic_by_year.py`(모델 없이 feature별 연도별 표준 IC, test 미사용), `scripts/experiment_target_transform.py`(raw/demeaned/rank 타깃 × all19/reversal4 feature 세트 × 3개 구간, IC·coverage·best_iteration 비교, test 미사용) 추가. 합성 데이터로 두 스크립트 동작 확인(planted 반전 신호 복원), 테스트 158개 통과. 실제 데이터 실행 결과는 아직 없음.
+- **다음 단계**: (1) `diagnose_feature_ic_by_year.py` 실행 — 반전 신호의 부호가 구간별로 안정적인지, 언제 사라졌는지 확인. (2) `experiment_target_transform.py` 실행 — 타깃 변환이 coverage와 IC를 올리는지, 3개 구간 모두에서 재현되는지 확인. (3) 결과에 따라 `train_model` 기본 타깃/early stopping 기준 변경 여부 결정.
+
+
+32. **feature 연도별 IC + 타깃 변환 실험 결과: 반전 효과는 부호가 안정적이나 크기가 감쇠, rank 타깃이 가장 안정적, 비용 차감 후 수익성은 미검증**
+
+- **연도별 IC(`diagnose_feature_ic_by_year.py`, test 제외)**: 최근 수익률/추세 계열(return_5d, return_10d, return_20d, rsi_14, price_to_sma_*)은 거의 모든 연도·구간에서 음(=단기 반전)의 부호를 유지. 다만 크기는 구간별로 줄어 2020~2023.06 구간에서는 약 -1(×100) 수준. 변동성 계열 feature는 2016년 전후로 부호가 뒤집힘(구간 간 불안정). 연도별 IC의 표준오차 ≈2(×100), 4년 구간 평균 ≈1(×100)이므로 개별 연도의 차이는 잡음일 수 있음.
+- **타깃 변환 실험(`experiment_target_transform.py`, 3개 구간)**: rank 타깃 + all19 feature가 3개 구간 모두 IC 양수(W1 0.0635 / W2 0.0413 / W3 0.0130), coverage ≈100%로 가장 안정적이나 최근으로 갈수록 감소. raw 타깃 all19는 W2에서 best_iteration=0으로 붕괴(불안정). reversal4 + demeaned 조합도 best_iteration=0으로 붕괴. 개선폭은 있지만 크지 않고 감쇠 패턴은 그대로.
+- **해석**: (1) 안정적으로 관찰되는 것은 단기 반전뿐, 크기는 감쇠 중. (2) 기존 모멘텀 baseline(`calculate_score`)은 이 유니버스에서 부호가 반대(잘못된 방향)로 보임. (3) IC 0.04 수준이면 5일 총수익 ≈0.3%로 왕복 비용 ≈0.43%보다 낮거나 비슷할 수 있음 → 경제적 유의성은 미검증.
+- **조치**: `scripts/walk_forward_backtest_compare.py` 추가. 검증 구간별로 모멘텀 / 반전(score=-momentum) / ML(all19, rank 타깃)을 top_n 5·10, 비용 0 및 실제 비용 두 설정으로 백테스트하고 유니버스 평균 대비 초과수익·t값·순수익·MDD를 출력. test 미사용. 합성 데이터로만 동작 확인, 실제 데이터 결과는 아직 없음.
+- **다음 단계**: (1) `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python3 scripts/walk_forward_backtest_compare.py` 실행 후 결과 확인. (2) 비용 차감 후에도 초과수익이 있는지에 따라 `train_model` 기본 타깃(rank)/early stopping 기준 변경 또는 Phase H~J(뉴스/거시/거래량 feature) 진행 결정.
+
+33. **walk_forward_backtest_compare 실제 데이터 결과(top50, 검증 3개 구간): 총수익 기준 약한 반전 알파는 있으나 왕복 비용(~0.43%) 차감 후 순수익은 거의 전부 음수**
+
+- **설정**: 검증 구간만 사용(test 미사용), 5일 비중복 리밸런싱, 모멘텀 / 반전(score=-momentum) / ML(all19, rank 타깃), top_n 5·10, 유니버스 평균 대비 초과수익. ML best_iteration: W1 294, W2 45, W3 8(W3는 거의 미학습 수준).
+- **3개 구간 평균(5일 기준)**: ML top5 gross +0.303% / excess +0.222% / t 1.34 / net -0.128%; ML top10 +0.264% / +0.183% / t 1.63 / net -0.166%; 반전 top5 +0.326% / +0.245% / t 1.38 / net -0.105%; 반전 top10 +0.208% / +0.127% / t 1.15 / net -0.222%; 모멘텀 top5 -0.224% / -0.304% / t -1.71 / net -0.652%.
+- **관찰**: (1) 모멘텀은 방향이 반대(W2 top5 t=-3.03). (2) 반전·ML 모두 excess가 12개 구간×top_n 조합 전부에서 양수이나 t값은 대부분 1~1.5 수준, 2를 넘는 것은 ML W1 top5(2.23)·반전 W1 top10(2.01) 둘뿐(다중비교 감안 시 확정 불가). (3) net이 양수인 조합은 W3 반전 top5(+0.107%/5일)와 ML top5(+0.021%)뿐이고, 평균 net은 전 조합에서 음수. (4) ML이 단순 반전(=-momentum 한 줄)을 뚜렷하게 이기지 못함(top5 평균 gross 0.303 vs 0.326, top10은 0.264 vs 0.208). (5) net_cum -27~-83%, MDD -40~-84%로 비용 차감 시 실전 불가 수준.
+- **주의(편향)**: 반전 전략의 방향은 모멘텀이 지는 것을 본 뒤, 그리고 같은 검증 구간의 feature IC를 본 뒤에 정한 것이므로 이 검증 결과에는 선택 편향이 일부 있음. 손익분기 비용은 gross ≈0.3%/5일로, 세금+수수료(~0.23%)만으로도 여유가 ≈0.07%뿐이어서 구조적으로 빠듯함.
+- **결론**: 현 feature(가격/거래량 기반 19개)와 5일 전량 교체 방식으로는 비용 차감 후 수익성 근거 없음. `SELECTED_FEATURES`, 기본 모델, 운용 방식 변경 없음. 테스트 구간 추가 사용 없음.
+- **다음 단계 후보**: (1) 회전율 절감(보유 종목이 상위 2k 안이면 유지하는 buffer 규칙)과 비용 민감도(슬리피지 0.03/0.1%)를 사전에 정한 그리드로 검증 구간에서 확인. (2) early stopping을 IC 기준으로 변경(W3 best_iteration=8 문제). (3) 가격 기반 신호의 한계가 확인됐으므로 Phase H~J(뉴스/거시/거래량·수급 feature) 진행.

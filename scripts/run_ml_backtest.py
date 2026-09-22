@@ -18,6 +18,8 @@ apples-to-apples.
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 
 from src.backtest.baseline import (
@@ -29,17 +31,14 @@ from src.backtest.baseline import (
 )
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
+from src.data.universe import get_universe
 from src.features.engineering import SELECTED_FEATURES
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from src.models.predict import train_model
 
-STOCK_CODES = (
-    "000660",
-    "005380",
-    "005930",
-    "035420",
-    "035720",
-)
+# core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe
+# (see src/data/universe.py).
+STOCK_CODES = get_universe()
 
 CONFIG = BaselineConfig(
     lookback_days=5,
@@ -49,6 +48,9 @@ CONFIG = BaselineConfig(
     sell_tax=0.0020,
     buy_slippage=0.0010,
     sell_slippage=0.0010,
+    # Stocks listed at different times (top50) need the partial-universe engine;
+    # core5 keeps the original behavior so recorded results stay reproducible.
+    allow_partial_universe=len(STOCK_CODES) != 5,
 )
 
 # All-in on the single top pick (top_n=1) concentrates 100% of capital
@@ -57,7 +59,8 @@ CONFIG = BaselineConfig(
 # materially less single-stock blowup risk. Both the momentum baseline
 # and the ML strategy use the same TOP_N so the comparison stays
 # apples-to-apples.
-TOP_N = 2
+# With 50 stocks, 2 picks is very concentrated: try STOCKLENS_TOP_N=5 or 10.
+TOP_N = int(os.environ.get("STOCKLENS_TOP_N", "2"))
 
 
 def _load_priced_dataset() -> pd.DataFrame:

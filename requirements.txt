@@ -1,8 +1,8 @@
 requests
-pandas
-numpy
+pandas==3.0.5
+numpy==2.5.2
 python-dotenv
 pydantic
 scikit-learn
-xgboost
+xgboost==3.4.1
 pytest

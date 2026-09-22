@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
+from src.data.universe import get_universe
 
 
-STOCK_CODES = (
-    "000660",
-    "005380",
-    "005930",
-    "035420",
-    "035720",
-)
+# core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe
+# (see src/data/universe.py).
+STOCK_CODES = get_universe()
 
 
 def main() -> None:

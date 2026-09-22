@@ -42,10 +42,11 @@ from scipy import stats
 
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
+from src.data.universe import get_universe
 from src.features.engineering import FEATURE_COLUMNS
 from src.models.predict import train_model, predict
 
-ALL_STOCKS = ("000660", "005380", "005930", "035420", "035720")
+ALL_STOCKS = get_universe()  # core5 by default; STOCKLENS_UNIVERSE=top50 for 50 stocks
 
 # Same exclusion as the current SELECTED_FEATURES: these mix raw price/
 # volume level across differently-priced stocks and previously caused the
@@ -90,27 +91,51 @@ def load_dataset() -> pd.DataFrame:
 
 def cross_sectional_ic(
     df: pd.DataFrame, score_col: str, target_col: str = "target_return_5d"
-) -> tuple[float, float, int]:
-    """Mean Spearman rank IC across decision dates, %days with IC>0, n_days."""
-    ics = []
+) -> tuple[float, float, int, float]:
+    """Cross-sectional Spearman rank IC over ALL eligible decision dates.
+
+    Returns ``(mean_ic, pct_pos, n_days, coverage)``.
+
+    A date is eligible when at least 3 stocks are present. On an eligible
+    date where the score is identical for every stock the IC is undefined
+    (a tiny early-stopped tree model often puts every stock in the same
+    leaf). Such a date is counted as IC = 0, NOT dropped: the model made
+    no ranking call that day, and dropping those days lets a weak model
+    report the IC of only the days on which it happened to discriminate --
+    a selected, inflated subset (top50 run: a 4-feature Wrapper showed
+    IC +0.0566 on n=343 of ~865 days).
+
+    ``pct_pos`` is the share of ALL eligible days with IC > 0; ``coverage``
+    is the share of eligible days on which the IC was defined.
+    """
+    ics: list[float] = []
+    n_eligible = 0
+    n_defined = 0
     for _, group in df.groupby("trade_date"):
-        if group["stock_code"].nunique() < 3 or group[score_col].nunique() < 2:
+        if group["stock_code"].nunique() < 3:
+            continue
+        n_eligible += 1
+        if group[score_col].nunique() < 2:
+            ics.append(0.0)
             continue
         ic, _ = stats.spearmanr(group[score_col], group[target_col])
-        if not np.isnan(ic):
-            ics.append(ic)
-    ics = np.array(ics)
-    if len(ics) == 0:
-        return float("nan"), float("nan"), 0
-    return float(ics.mean()), float((ics > 0).mean()), len(ics)
+        if np.isnan(ic):
+            ics.append(0.0)
+            continue
+        ics.append(float(ic))
+        n_defined += 1
+    if n_eligible == 0:
+        return float("nan"), float("nan"), 0, 0.0
+    arr = np.array(ics)
+    return float(arr.mean()), float((arr > 0).mean()), n_eligible, n_defined / n_eligible
 
 
-def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, float, int]:
+def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, float, int, float]:
     """Train on train (early-stopped on validation), score cross-sectional
     IC on validation. Returns -inf for mean_ic if the result is unreliable
     (too few usable cross-sectional decision-dates)."""
     if not feature_set:
-        return float("-inf"), float("nan"), 0
+        return float("-inf"), float("nan"), 0, 0.0
 
     trained = train_model(
         splits.train, splits.train["target_return_5d"],
@@ -120,11 +145,11 @@ def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, f
     )
     val = splits.validation.copy()
     val["predicted_return"] = predict(trained, val)
-    mean_ic, pct_pos, n = cross_sectional_ic(val, "predicted_return")
+    mean_ic, pct_pos, n, cov = cross_sectional_ic(val, "predicted_return")
 
     if n < MIN_DAYS or np.isnan(mean_ic):
-        return float("-inf"), pct_pos, n
-    return mean_ic, pct_pos, n
+        return float("-inf"), pct_pos, n, cov
+    return mean_ic, pct_pos, n, cov
 
 
 # ---------------------------------------------------------------------
@@ -140,13 +165,13 @@ def filter_method(splits) -> tuple[tuple[str, ...], float]:
     val = splits.validation
     scores = []
     for feat in CANDIDATES:
-        mean_ic, pct_pos, n = cross_sectional_ic(val, feat)
-        scores.append((feat, mean_ic, pct_pos, n))
+        mean_ic, pct_pos, n, cov = cross_sectional_ic(val, feat)
+        scores.append((feat, mean_ic, pct_pos, n, cov))
     scores.sort(key=lambda r: -abs(r[1]) if not np.isnan(r[1]) else 0)
 
-    print(f"{'feature':<20}{'mean_IC':>10}{'%days>0':>10}{'n_days':>8}")
-    for feat, mean_ic, pct_pos, n in scores:
-        print(f"{feat:<20}{mean_ic:>+10.4f}{pct_pos:>10.2%}{n:>8}")
+    print(f"{'feature':<20}{'mean_IC':>10}{'%days>0':>10}{'n_days':>8}{'coverage':>10}")
+    for feat, mean_ic, pct_pos, n, cov in scores:
+        print(f"{feat:<20}{mean_ic:>+10.4f}{pct_pos:>10.2%}{n:>8}{cov:>10.1%}")
 
     ranked_features = [f for f, *_ in scores]
 
@@ -154,9 +179,9 @@ def filter_method(splits) -> tuple[tuple[str, ...], float]:
     best_subset, best_ic = None, float("-inf")
     for k in sorted(set([3, 5, 8, 12, len(ranked_features)])):
         subset = tuple(ranked_features[:k])
-        mean_ic, pct_pos, n = evaluate_feature_set(splits, subset)
+        mean_ic, pct_pos, n, cov = evaluate_feature_set(splits, subset)
         note = "" if mean_ic > float("-inf") else "  [UNRELIABLE]"
-        print(f"  top-{k:<3} val_xsec_IC={mean_ic:+.4f}  %days>0={pct_pos:.2%}  n={n}{note}")
+        print(f"  top-{k:<3} val_xsec_IC={mean_ic:+.4f}  %days>0={pct_pos:.2%}  n={n}  coverage={cov:.1%}{note}")
         print(f"           {subset}")
         if mean_ic > best_ic:
             best_subset, best_ic = subset, mean_ic
@@ -184,15 +209,15 @@ def wrapper_sfs(splits, max_features: int = 10) -> tuple[tuple[str, ...], float]
         round_results = []
         for feat in remaining:
             trial = tuple(selected + [feat])
-            mean_ic, pct_pos, n = evaluate_feature_set(splits, trial)
-            round_results.append((feat, mean_ic, pct_pos, n))
+            mean_ic, pct_pos, n, cov = evaluate_feature_set(splits, trial)
+            round_results.append((feat, mean_ic, pct_pos, n, cov))
 
         round_results.sort(key=lambda r: r[1], reverse=True)
-        best_feat, best_mean_ic, best_pct, best_n = round_results[0]
+        best_feat, best_mean_ic, best_pct, best_n, best_cov = round_results[0]
 
         print(
             f"  round {len(selected) + 1}: best add = {best_feat:<20} "
-            f"-> IC={best_mean_ic:+.4f} (%days>0={best_pct:.2%}, n={best_n})  "
+            f"-> IC={best_mean_ic:+.4f} (%days>0={best_pct:.2%}, n={best_n}, coverage={best_cov:.1%})  "
             f"[current best={best_ic_so_far:+.4f}]"
         )
 
@@ -236,9 +261,9 @@ def embedded_importance(splits) -> tuple[tuple[str, ...], float]:
     best_subset, best_ic = None, float("-inf")
     for k in sorted(set([3, 5, 8, 12, len(ranked_features)])):
         subset = tuple(ranked_features[:k])
-        mean_ic, pct_pos, n = evaluate_feature_set(splits, subset)
+        mean_ic, pct_pos, n, cov = evaluate_feature_set(splits, subset)
         note = "" if mean_ic > float("-inf") else "  [UNRELIABLE]"
-        print(f"  top-{k:<3} val_xsec_IC={mean_ic:+.4f}  %days>0={pct_pos:.2%}  n={n}{note}")
+        print(f"  top-{k:<3} val_xsec_IC={mean_ic:+.4f}  %days>0={pct_pos:.2%}  n={n}  coverage={cov:.1%}{note}")
         print(f"           {subset}")
         if mean_ic > best_ic:
             best_subset, best_ic = subset, mean_ic
@@ -251,10 +276,10 @@ def main() -> None:
     dataset = load_dataset()
     splits = split_by_time(dataset)
 
-    baseline_ic, _, baseline_n = evaluate_feature_set(splits, CANDIDATES)
+    baseline_ic, _, baseline_n, baseline_cov = evaluate_feature_set(splits, CANDIDATES)
     print(
         f"BASELINE (current SELECTED_FEATURES = all {len(CANDIDATES)} scale-free "
-        f"candidates): val_xsec_IC={baseline_ic:+.4f}  n={baseline_n}"
+        f"candidates): val_xsec_IC={baseline_ic:+.4f}  n={baseline_n}  coverage={baseline_cov:.1%}"
     )
 
     filter_subset, filter_ic = filter_method(splits)
@@ -290,8 +315,8 @@ def main() -> None:
     )
     test = splits.test.copy()
     test["predicted_return"] = predict(trained, test)
-    mean_ic, pct_pos, n = cross_sectional_ic(test, "predicted_return")
-    print(f"  Test cross-sectional IC = {mean_ic:+.4f}  %days>0={pct_pos:.2%}  n={n}")
+    mean_ic, pct_pos, n, cov = cross_sectional_ic(test, "predicted_return")
+    print(f"  Test cross-sectional IC = {mean_ic:+.4f}  %days>0={pct_pos:.2%}  n={n}  coverage={cov:.1%}")
     print(
         "\n  Next: if this beats the current baseline, update SELECTED_FEATURES in "
         "src/features/engineering.py to this subset and re-run scripts/run_ml_backtest.py "

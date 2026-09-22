@@ -27,3 +27,8 @@ htmlcov/
 
 # Generated data
 *.log
+
+# Kiwoom raw API dumps (regenerable; ~3MB per stock per run, adds up at 50 stocks)
+data/raw/
+# Derived datasets (regenerable with scripts/build_ml_dataset.py)
+data/processed/*.csv

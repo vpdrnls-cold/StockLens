@@ -39,10 +39,11 @@ from src.data.dataset import (
     split_by_time,
 )
 from src.data.storage import HistoricalStorage
+from src.data.universe import get_universe
 from src.features.engineering import FEATURE_COLUMNS
 from src.models.predict import train_model, predict
 
-ALL_STOCKS = ("000660", "005380", "005930", "035420", "035720")
+ALL_STOCKS = get_universe()  # core5 by default; STOCKLENS_UNIVERSE=top50 for 50 stocks
 
 RAW_SCALE_FEATURES = {
     "sma_5", "sma_20", "sma_60",
@@ -87,23 +88,48 @@ def load_dataset() -> pd.DataFrame:
 
 def cross_sectional_ic(
     df: pd.DataFrame, score_col: str, target_col: str = "target_return_5d"
-) -> tuple[float, float, int]:
-    ics = []
+) -> tuple[float, float, int, float]:
+    """Cross-sectional Spearman rank IC over ALL eligible decision dates.
+
+    Returns ``(mean_ic, pct_pos, n_days, coverage)``.
+
+    A date is eligible when at least 3 stocks are present. On an eligible
+    date where the score is identical for every stock the IC is undefined
+    (a tiny early-stopped tree model often puts every stock in the same
+    leaf). Such a date is counted as IC = 0, NOT dropped: the model made
+    no ranking call that day, and dropping those days lets a weak model
+    report the IC of only the days on which it happened to discriminate --
+    a selected, inflated subset (top50 run: a 4-feature Wrapper showed
+    IC +0.0566 on n=343 of ~865 days).
+
+    ``pct_pos`` is the share of ALL eligible days with IC > 0; ``coverage``
+    is the share of eligible days on which the IC was defined.
+    """
+    ics: list[float] = []
+    n_eligible = 0
+    n_defined = 0
     for _, group in df.groupby("trade_date"):
-        if group["stock_code"].nunique() < 3 or group[score_col].nunique() < 2:
+        if group["stock_code"].nunique() < 3:
+            continue
+        n_eligible += 1
+        if group[score_col].nunique() < 2:
+            ics.append(0.0)
             continue
         ic, _ = stats.spearmanr(group[score_col], group[target_col])
-        if not np.isnan(ic):
-            ics.append(ic)
-    ics = np.array(ics)
-    if len(ics) == 0:
-        return float("nan"), float("nan"), 0
-    return float(ics.mean()), float((ics > 0).mean()), len(ics)
+        if np.isnan(ic):
+            ics.append(0.0)
+            continue
+        ics.append(float(ic))
+        n_defined += 1
+    if n_eligible == 0:
+        return float("nan"), float("nan"), 0, 0.0
+    arr = np.array(ics)
+    return float(arr.mean()), float((arr > 0).mean()), n_eligible, n_defined / n_eligible
 
 
-def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, float, int]:
+def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, float, int, float]:
     if not feature_set:
-        return float("-inf"), float("nan"), 0
+        return float("-inf"), float("nan"), 0, 0.0
     trained = train_model(
         splits.train, splits.train["target_return_5d"],
         splits.validation, splits.validation["target_return_5d"],
@@ -112,10 +138,10 @@ def evaluate_feature_set(splits, feature_set: tuple[str, ...]) -> tuple[float, f
     )
     val = splits.validation.copy()
     val["predicted_return"] = predict(trained, val)
-    mean_ic, pct_pos, n = cross_sectional_ic(val, "predicted_return")
+    mean_ic, pct_pos, n, cov = cross_sectional_ic(val, "predicted_return")
     if n < MIN_DAYS or np.isnan(mean_ic):
-        return float("-inf"), pct_pos, n
-    return mean_ic, pct_pos, n
+        return float("-inf"), pct_pos, n, cov
+    return mean_ic, pct_pos, n, cov
 
 
 def wrapper_sfs(splits, max_features: int = MAX_WRAPPER_FEATURES) -> tuple[tuple[str, ...], float]:
@@ -127,15 +153,15 @@ def wrapper_sfs(splits, max_features: int = MAX_WRAPPER_FEATURES) -> tuple[tuple
         round_results = []
         for feat in remaining:
             trial = tuple(selected + [feat])
-            mean_ic, pct_pos, n = evaluate_feature_set(splits, trial)
-            round_results.append((feat, mean_ic, pct_pos, n))
+            mean_ic, pct_pos, n, cov = evaluate_feature_set(splits, trial)
+            round_results.append((feat, mean_ic, pct_pos, n, cov))
 
         round_results.sort(key=lambda r: r[1], reverse=True)
-        best_feat, best_mean_ic, best_pct, best_n = round_results[0]
+        best_feat, best_mean_ic, best_pct, best_n, best_cov = round_results[0]
 
         print(
             f"    round {len(selected) + 1}: best add = {best_feat:<20} "
-            f"-> IC={best_mean_ic:+.4f} (%days>0={best_pct:.2%}, n={best_n})"
+            f"-> IC={best_mean_ic:+.4f} (%days>0={best_pct:.2%}, n={best_n}, coverage={best_cov:.1%})"
         )
 
         if best_mean_ic <= best_ic_so_far:
