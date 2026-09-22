@@ -142,3 +142,101 @@ def test_train_model_respects_custom_feature_subset() -> None:
 
     predictions = predict(trained, X_val)
     assert predictions.shape == (len(X_val),)
+
+
+def _make_cross_sectional_dataset(
+    n_dates: int = 200, n_stocks: int = 10, seed: int = 0, shock_std: float = 0.3
+) -> pd.DataFrame:
+    """Cross-sectional data shaped like the real problem diagnosed in
+    CURRENT_STATUS.md items 30-32: on each date, every stock shares a
+    large common shock unrelated to any feature (unlearnable), plus a
+    much smaller but genuinely learnable cross-sectional signal from
+    ``price_to_sma_5``. RMSE is dominated by the common shock (it swamps
+    small round-over-round improvements in the cross-sectional signal),
+    while IC only looks at within-date ranking, where the common shock
+    cancels out exactly because it is added equally to every stock on
+    the date.
+    """
+    rng = np.random.default_rng(seed)
+
+    dates = pd.date_range("2020-01-01", periods=n_dates, freq="B")
+    rows = []
+    for date in dates:
+        common_shock = rng.normal(0, shock_std)
+        signal = rng.normal(0, 1, n_stocks)
+        noise_features = {
+            feature: rng.normal(0, 1, n_stocks)
+            for feature in SELECTED_FEATURES
+            if feature != "price_to_sma_5"
+        }
+        target = common_shock + 0.01 * signal + rng.normal(0, 0.002, n_stocks)
+        for i in range(n_stocks):
+            row = {
+                "trade_date": date,
+                "stock_code": f"S{i}",
+                "price_to_sma_5": signal[i],
+                "target_return_5d": target[i],
+            }
+            for feature, values in noise_features.items():
+                row[feature] = values[i]
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def test_ic_early_stopping_requires_trade_date_column() -> None:
+    X_train, y_train, X_val, y_val = _split(_make_learnable_dataset())
+
+    with pytest.raises(ValueError, match="trade_date"):
+        train_model(
+            X_train, y_train, X_val, y_val, early_stopping_metric="ic"
+        )
+
+
+def test_train_model_rejects_unknown_early_stopping_metric() -> None:
+    X_train, y_train, X_val, y_val = _split(_make_learnable_dataset())
+
+    with pytest.raises(ValueError, match="early_stopping_metric"):
+        train_model(
+            X_train, y_train, X_val, y_val, early_stopping_metric="mae"
+        )
+
+
+def test_ic_early_stopping_achieves_at_least_as_good_validation_ic() -> None:
+    from src.ml.cross_section import daily_rank_ic, summarize_ic
+
+    df = _make_cross_sectional_dataset()
+    cut = int(df["trade_date"].nunique() * 0.7)
+    cutoff_date = df["trade_date"].unique()[cut]
+    train = df[df["trade_date"] < cutoff_date]
+    val = df[df["trade_date"] >= cutoff_date]
+
+    rmse_model = train_model(
+        train, train["target_return_5d"], val, val["target_return_5d"],
+        early_stopping_metric="rmse",
+    )
+    ic_model = train_model(
+        train, train["target_return_5d"], val, val["target_return_5d"],
+        early_stopping_metric="ic",
+    )
+
+    def val_ic(trained) -> float:
+        preds = predict(trained, val)
+        frame = val.copy()
+        frame["predicted"] = preds
+        return summarize_ic(
+            daily_rank_ic(frame, "predicted", "target_return_5d")
+        ).mean_ic
+
+    rmse_val_ic = val_ic(rmse_model)
+    ic_val_ic = val_ic(ic_model)
+
+    # best_iteration is not asserted here: per-round IC on a few hundred
+    # cross-sectional dates is itself noisy, so IC-based early stopping
+    # can legitimately stop earlier OR later than RMSE-based stopping
+    # depending on the run. What must hold is the actual point of this
+    # feature -- the model IC-based stopping actually lands on performs
+    # at least as well, out of sample, on the metric that matters
+    # (cross-sectional rank IC), which RMSE-based stopping was never
+    # optimizing for in the first place.
+    assert ic_val_ic >= rmse_val_ic - 1e-9

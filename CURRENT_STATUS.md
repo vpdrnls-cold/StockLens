@@ -435,3 +435,29 @@ MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신�
 - **결과(현재 0.10% 슬리피지 가정 기준)**: **top_n=10, buffer_multiplier=3.0에서 reversal과 ML 둘 다 3개 구간(W1/W2/W3) 전부 net_cum이 양수로 전환됨** — reversal10: W1 +12.0%, W2 +22.4%, W3 +28.9%; ML10: W1 +23.9%, W2 +1.7%, W3 +42.8%. 같은 설정에서 회전율(entries_per_period)은 10.00(매 구간 전량 교체)에서 2.09~3.83(약 65~80% 감소)으로 줄어듦 — 가설대로 불필요한 왕복거래 비용이 순손실의 상당 부분이었던 것으로 보임. top_n=5는 구간별로 부호가 엇갈려(W1 reversal5 buf3 -22.2% vs ML5 buf3 +21.2%, 반대로 W2는 그 반대 부호) top_n=10만큼 일관되지 않음. 슬리피지를 0.03%로 낮추면 더 많은 조합이 양전환되지만(예: ML top5 buffer≥1.5x 전부 양수), 이건 비용 가정을 낙관적으로 바꾼 결과라 별개로 다뤄야 함(다음 단계 4번, 가정 검증).
 - **캐비어트**: (1) MDD는 양전환된 조합에서도 여전히 -20%~-45%로 큼 — 순수익이 플러스라고 해서 실전 투입 가능하다는 뜻은 아님. (2) 그리드가 2×2×4×2=32칸이라 다중비교 우려가 있으나, top_n=10/buffer=3.0 조합은 3개 구간 전부·reversal/ML 둘 다에서 일관되게 나타나 단일 구간 우연히 걸린 결과보다는 신뢰도가 높음. (3) top50 생존편향(AGENTS.md 23절)은 항목 33과 동일하게 적용됨. (4) 이 결과는 여전히 validation만 사용했고 test는 안 건드림.
 - **다음 단계**: (1) top_n=10/buffer_multiplier=3.0을 새 기본 운용 파라미터로 채택할지 재훈이 결정 — 채택한다면 `run_ml_backtest.py` 등 실제 운용 스크립트를 `run_baseline_backtest`에서 `run_buffered_backtest`로 바꿔야 함(아직 안 바꿈, 지금은 실험 스크립트에만 존재). (2) pre-registered checklist 3번(IC 기준 early stopping)으로 이동 — W3 `best_iteration=8` 문제가 이번 재실행에서도 그대로 재현됨(W1=294, W2=45, W3=8). (3) 슬리피지 가정 자체의 현실성 검증(다음 단계 4번)은 이 buffer 결과가 그 가정에 민감하다는 걸 확인했으므로 우선순위가 올라감.
+
+36. **Early stopping을 cross-sectional rank IC 기준으로 변경 — RMSE 기준이 "사실상 미학습"으로 붕괴하는 구간을 실제로 구제함(validation 전용)**
+
+- **배경**: 항목 30/31/33/35에서 반복 관찰된 문제 — RMSE로 fit·early stopping하면 `target_return_5d`의 분산 대부분을 차지하는 종목-공통(market-wide) 성분 때문에 몇 라운드 만에 개선이 멈추고(`best_iteration` 0~8), 그 결과 그날 모든 종목의 예측이 사실상 동일해져(같은 leaf) coverage가 무너지는 경우가 있었음(top50 W3 rank 타깃 `best_iteration=8`이 항목 33/35에서 두 번 재현). 종목 간 상대 순위만 보는 cross-sectional rank IC는 그 공통 성분이 구조적으로 상쇄되므로, 같은 기준으로 early stopping하면 이 붕괴를 피할 수 있을 것이라는 가설.
+- **구현**: `src/models/predict.py`에 `train_model(..., early_stopping_metric="rmse"|"ic")` 파라미터 추가(기본값 `"rmse"`라 기존 모든 호출부는 동작 불변). `"ic"`는 XGBoost의 custom `eval_metric` callable로 `-mean_ic`(날짜별 rank IC 평균의 부호 반전, `src/ml/cross_section.py`의 `daily_rank_ic`/`summarize_ic` 재사용 — IC 미정의일은 0으로 처리해 항목 30의 coverage-aware 관례와 동일)를 반환하는 `_make_ic_eval_metric()`을 사용. XGBoost 3.2.0의 실제 동작(콜러블은 튜플이 아니라 순수 float 반환, 시그니처는 `(y_true, y_pred)`, 작을수록 좋음이라는 관례를 그대로 따름 — RMSE와 동일)을 별도 토이 스크립트로 먼저 검증한 뒤 구현. `"ic"`를 쓰려면 `X_val`에 `trade_date` 컬럼이 있어야 하며(날짜별로 IC를 계산해야 하므로), 없으면 명시적 `ValueError`.
+- **테스트**: `tests/test_predict.py`에 3개 추가 — `trade_date` 없이 `"ic"` 요청 시 에러, 알 수 없는 `early_stopping_metric` 값 거부, 그리고 항목 30-32가 진단한 문제를 그대로 재현하는 합성 cross-sectional 데이터(날짜별 큰 공통 충격 + 작은 학습 가능 신호)에서 `"ic"`로 학습한 모델의 검증 IC가 `"rmse"`로 학습한 모델의 검증 IC보다 나쁘지 않음을 확인. (`best_iteration` 자체의 대소는 검증하지 않음 — 수백 일 단위의 라운드별 IC는 그 자체로 잡음이 커서 ic 쪽이 더 일찍 멈출 수도 늦게 멈출 수도 있고, 실제로 중요한 것은 최종적으로 도달한 지점의 실전 지표(IC) 성능이기 때문.) 전체 테스트 166 → 169개 통과.
+- **실데이터 검증(`scripts/compare_early_stopping_metric.py`, top50, 3개 walk-forward 구간 × {raw, rank} 타깃, validation만 사용, test 미접근)**:
+
+  | window | target | stop_on | best_iter | val_ic | coverage |
+  |---|---|---|---|---|---|
+  | W1 | raw | rmse | 157 | 0.0609 | 100.0% |
+  | W1 | raw | ic | 134 | 0.0614 | 100.0% |
+  | W1 | rank | rmse | 294 | 0.0635 | 100.0% |
+  | W1 | rank | ic | 47 | 0.0626 | 100.0% |
+  | W2 | raw | rmse | **0** | **-0.0010** | **0.9%** |
+  | W2 | raw | ic | 44 | **0.0357** | 100.0% |
+  | W2 | rank | rmse | 45 | 0.0413 | 100.0% |
+  | W2 | rank | ic | 49 | 0.0417 | 100.0% |
+  | W3 | raw | rmse | 55 | 0.0024 | 99.9% |
+  | W3 | raw | ic | 48 | 0.0046 | 98.6% |
+  | W3 | rank | rmse | 8 | 0.0130 | 99.9% |
+  | W3 | rank | ic | 4 | 0.0154 | 99.9% |
+
+- **관찰**: (1) 실제로 완전히 붕괴한 사례는 W2의 raw 타깃이었음(원래 우려했던 W3가 아니라) — `best_iteration=0`, coverage 0.9%(사실상 랜덤). `"ic"`로 바꾸자 `best_iteration=44`, coverage 100%, val_ic가 -0.0010 → 0.0357로 회복해 같은 구간 rank 타깃 수준(0.041x)에 근접함 — 이 항목이 원래 노리던 "미학습 붕괴 구제"가 실제로 일어난 유일하지만 뚜렷한 사례. (2) 애초에 붕괴하지 않았던 조합(W1 전체, W2/W3 rank)에서는 `"ic"`가 val_ic를 소폭 개선(W1 raw, W3 raw/rank)하거나 소폭 악화(W1 rank: 0.0635→0.0626)시키는 정도로, 어느 쪽도 악화 폭이 크지 않음. (3) W3 rank 타깃(원래 이 항목을 촉발한 `best_iteration=8` 문제, 항목 33/35)은 `"ic"`로 바꿔도 `best_iteration`이 오히려 더 낮아짐(8→4)에도 val_ic는 개선(0.0130→0.0154) — 즉 "더 오래 학습시켜서" 고쳐지는 문제가 아니라, RMSE 기준으로 고른 정지 지점 자체가 IC 관점에서는 최선이 아니었던 것으로 보임. (4) 종합하면 rank 타깃이 여전히 raw 타깃보다 전반적으로 안정적이라는 항목 32의 결론은 유지되며, `"ic"` early stopping은 rank 타깃과 결합했을 때 W1에서만 미미하게 손해(-0.0009)를 보고 W2/W3에서는 동률이거나 개선.
+- **결론**: IC 기준 early stopping은 (a) RMSE 기준이 완전히 붕괴하는 극단적 사례를 실제로 구제하고, (b) 이미 정상 작동하던 사례를 크게 훼손하지 않음. `rank` 타깃 + `early_stopping_metric="ic"` 조합을 새 기본값 후보로 볼 수 있는 근거가 됨 — 다만 `train_model`의 기본값(`early_stopping_metric="rmse"`)은 기존 호출부 하위호환을 위해 아직 바꾸지 않았고(opt-in 상태), 실제로 기본값을 바꿀지·어느 운용 스크립트에 적용할지는 항목 4(Window1/W3 root-cause) 및 5(rank/분류 타겟 채택 결정)와 함께 재훈이 최종 결정할 사항으로 남김.
+- **다음 단계**: (1) 이 결과를 pre-registered checklist 4번(Window1/W3 `best_iteration` 원인 조사)에 반영 — 이번 결과로 "원인은 RMSE가 공통 성분에 의해 조기 정체되는 것"이라는 항목 31의 가설이 사실상 확인됨(W2 raw 사례로), 다만 W3 rank의 `best_iteration=8` 자체는 `"ic"`로도 낮게 유지되는 것으로 보아 이 특정 구간은 애초에 학습 가능한 신호가 거의 없어서(항목 32의 "신호 감쇠") 짧게 멈추는 것이 오히려 정상일 가능성도 있음 — 별도 판단 필요. (2) checklist 5번(rank/분류 타겟 채택 + 모멘텀·ML 앙상블)으로 이동. (3) test는 여전히 미접근.
