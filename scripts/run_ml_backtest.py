@@ -14,12 +14,19 @@ Both strategies below run through the exact same execution engine
 T+holding_days close exit, identical fees/tax/slippage. Only the
 stock-picking rule (score_fn) differs, so the comparison is
 apples-to-apples.
+
+The ML model is trained on the per-date RANK of target_return_5d (not
+the raw value) with early stopping on cross-sectional rank IC (not
+RMSE) -- see the comment above the train_model() call for why
+(CURRENT_STATUS.md item 38, the pre-Phase-H checklist's target/early-
+stopping adoption decision).
 """
 
 from __future__ import annotations
 
 import os
 
+import numpy as np
 import pandas as pd
 
 from src.backtest.baseline import (
@@ -32,14 +39,25 @@ from src.backtest.baseline import (
 from src.data.dataset import build_combined_dataset, split_by_time
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
-from src.features.engineering import SELECTED_FEATURES
+from src.features.engineering import FEATURE_COLUMNS, SELECTED_FEATURES
 from src.eval.test_lock import confirm_final_test_use
+from src.ml.cross_section import rank_by_date
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from src.models.predict import train_model
 
 # core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe
 # (see src/data/universe.py).
 STOCK_CODES = get_universe()
+
+# This script's whole purpose is to produce the ML-vs-baseline numbers
+# that decide whether Phase H is warranted -- those numbers must not
+# depend on which machine ran them. n_jobs=-1 + the default tree_method
+# is NOT reproducible across machines/thread counts for this reason
+# (AGENTS.md section 25, CURRENT_STATUS.md items 15/23-25). This was
+# never pinned here before (the script pre-dates that discovery and had
+# not been run end to end on top50 until item 38), unlike every
+# walk-forward diagnostic script since item 23.
+DETERMINISTIC_PARAMS = {"n_jobs": 1, "tree_method": "exact"}
 
 CONFIG = BaselineConfig(
     lookback_days=5,
@@ -74,6 +92,15 @@ def _load_priced_dataset() -> pd.DataFrame:
 
     dataset = build_combined_dataset(stock_bars)
     dataset["trade_date"] = pd.to_datetime(dataset["trade_date"])
+    # A handful of top50 stocks produce +-inf feature values (e.g. a
+    # near-zero moving average denominator) that core5 never hit -- this
+    # script pre-dates the top50 universe (item 28) and was never
+    # actually run against it end to end until now. Every top50
+    # walk-forward diagnostic script (items 30+) already does this same
+    # replacement; XGBoost otherwise hard-errors on inf input.
+    dataset[list(FEATURE_COLUMNS)] = dataset[list(FEATURE_COLUMNS)].replace(
+        [np.inf, -np.inf], np.nan
+    )
 
     prices = [
         {
@@ -122,12 +149,25 @@ def main() -> None:
     dataset = _load_priced_dataset()
     splits = split_by_time(dataset)
 
+    # Target: per-date rank of target_return_5d, not the raw value.
+    # Early stopping: cross-sectional rank IC, not RMSE.
+    # Adopted as the production default per CURRENT_STATUS.md item 38
+    # (pre-Phase-H checklist item 5), on the combined evidence of items
+    # 32/36/37: the rank target is more stable across all 3 walk-forward
+    # windows than the raw target, IC-based early stopping rescues the
+    # cases where RMSE-based stopping collapses to a near-untrained model
+    # without hurting the cases that were already fine, and a classification
+    # reframing (item 38) was strictly worse or equal in every window --
+    # so this combination, not raw+rmse, is what Phase G's actual
+    # ML-vs-baseline comparison (below) should use.
     print("=== Training daily model (train -> validation early stopping) ===")
     trained = train_model(
         splits.train,
-        splits.train["target_return_5d"],
+        rank_by_date(splits.train, "target_return_5d"),
         splits.validation,
-        splits.validation["target_return_5d"],
+        rank_by_date(splits.validation, "target_return_5d"),
+        params=DETERMINISTIC_PARAMS,
+        early_stopping_metric="ic",
     )
     print(f"Best iteration: {trained.best_iteration}")
     print(f"Features: {list(trained.feature_columns)}")
@@ -154,6 +194,11 @@ def main() -> None:
     )
 
     # ML-scored strategy: same engine, predictions instead of momentum.
+    # Note: since the model is trained on the rank target now, these are
+    # rank-scale scores (roughly in (-0.5, 0.5)), not return magnitudes --
+    # score_fn only needs relative ordering to pick top_n, so this is
+    # fine, but the "predicted_return" column name is a slight misnomer
+    # inherited from src.ml.strategy's original raw-target design.
     predictions = predictions_for_dataset(trained, splits.test)
     model_score_fn = make_model_score_fn(predictions)
     model_trades = run_baseline_backtest(
