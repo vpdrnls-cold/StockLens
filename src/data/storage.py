@@ -45,6 +45,36 @@ class HistoricalStorage:
         _write_json(path, dict(response))
         return path
 
+    def save_raw_ka10080(
+        self,
+        stock_code: str,
+        response: Mapping[str, Any],
+        *,
+        retrieved_at: datetime | None = None,
+    ) -> Path:
+        """Store the unmodified ka10080 minute-chart provider response.
+
+        Raw only, deliberately: there is no normalized minute-bar model
+        yet (Phase H design is still open on decision-timestamp cutoff
+        and regular-session-vs-NXT/overtime filtering as of
+        2026-09-22). Mirrors ``save_raw_ka10081``'s storage layout one
+        level down under ``ka10080`` instead.
+        """
+        safe_stock_code = _safe_stock_code(stock_code)
+        timestamp = (retrieved_at or datetime.now(timezone.utc)).strftime(
+            "%Y%m%dT%H%M%S%fZ"
+        )
+        path = (
+            self._data_root
+            / "raw"
+            / "kiwoom"
+            / "ka10080"
+            / safe_stock_code
+            / f"{timestamp}.json"
+        )
+        _write_json(path, dict(response))
+        return path
+
     def save_daily_bars(self, stock_code: str, bars: Sequence[DailyBar]) -> Path:
         """Merge normalized bars by date and write a canonical historical dataset."""
         safe_stock_code = _safe_stock_code(stock_code)

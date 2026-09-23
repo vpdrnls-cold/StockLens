@@ -444,3 +444,281 @@ def test_index_daily_chart_uses_documented_ka20006_request_fields() -> None:
         "inds_cd": "001",
         "base_dt": "20260831",
     }
+
+
+def test_minute_chart_page_uses_documented_ka10080_request_fields() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "token": "access-token",
+                    "token_type": "bearer",
+                    "expires_dt": "20991231235959",
+                    "return_code": 0,
+                }
+            ),
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [
+                        {
+                            "cur_prc": "250000",
+                            "trde_qty": "1000",
+                            "cntr_tm": "20260919140000",
+                            "open_pric": "249500",
+                        }
+                    ],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "Y", "next-key": "page-2-key"},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    response, response_headers = client.get_minute_chart_page(
+        "005930", "20260919", tic_scope="15"
+    )
+
+    assert response["stk_min_pole_chart_qry"][0]["cntr_tm"] == "20260919140000"
+    assert response_headers["cont-yn"] == "Y"
+    assert response_headers["next-key"] == "page-2-key"
+
+    assert session.calls[1]["url"].endswith("/api/dostk/chart")
+    assert session.calls[1]["headers"]["api-id"] == "ka10080"
+    assert session.calls[1]["headers"]["cont-yn"] == "N"
+    assert session.calls[1]["headers"]["next-key"] == ""
+    assert session.calls[1]["json"] == {
+        "stk_cd": "005930",
+        "tic_scope": "15",
+        "upd_stkpc_tp": "1",
+        "base_dt": "20260919",
+    }
+
+
+def test_minute_chart_page_does_not_auto_follow_continuation() -> None:
+    """Unlike get_daily_chart, get_minute_chart_page is a single raw call --
+    ka10080's real pagination semantics are not confirmed yet (see
+    scripts/check_kiwoom_minute_chart.py), so it must not loop on its own."""
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "token": "access-token",
+                    "token_type": "bearer",
+                    "expires_dt": "20991231235959",
+                    "return_code": 0,
+                }
+            ),
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [{"cntr_tm": "20260919140000"}],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "Y", "next-key": "page-2-key"},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    client.get_minute_chart_page("005930", "20260919")
+
+    # token call + exactly one chart page -- no automatic second request.
+    assert len(session.calls) == 2
+
+
+def test_minute_chart_page_can_request_a_manual_continuation_page() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "token": "access-token",
+                    "token_type": "bearer",
+                    "expires_dt": "20991231235959",
+                    "return_code": 0,
+                }
+            ),
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [{"cntr_tm": "20260918153000"}],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "N", "next-key": ""},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    client.get_minute_chart_page(
+        "005930",
+        "20260919",
+        cont_yn="Y",
+        next_key="page-2-key",
+    )
+
+    assert session.calls[1]["headers"]["cont-yn"] == "Y"
+    assert session.calls[1]["headers"]["next-key"] == "page-2-key"
+    # base_dt/stk_cd/tic_scope/upd_stkpc_tp are unchanged for a continuation page.
+    assert session.calls[1]["json"]["base_dt"] == "20260919"
+
+
+def test_minute_chart_page_rejects_unknown_tic_scope() -> None:
+    client = KiwoomClient(_settings(), session=FakeSession([]))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tic_scope"):
+        client.get_minute_chart_page("005930", "20260919", tic_scope="7")
+
+
+def test_minute_chart_page_rejects_malformed_base_date() -> None:
+    client = KiwoomClient(_settings(), session=FakeSession([]))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="base_date"):
+        client.get_minute_chart_page("005930", "2026-09-19")
+
+
+def test_minute_chart_history_follows_continuation_across_multiple_pages() -> None:
+    """Mirrors test_daily_chart_follows_continuation_across_multiple_pages,
+    now for ka10080 -- confirmed live (2026-09-22, see
+    scripts/check_kiwoom_minute_chart.py) to page backward in time the
+    same way ka10081 does, with no overlap/gap at the page boundary."""
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "token": "access-token",
+                    "token_type": "bearer",
+                    "expires_dt": "20991231235959",
+                    "return_code": 0,
+                }
+            ),
+            # Page 1: most recent bars, server says more history available.
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [
+                        {"cntr_tm": "20260922180000", "cur_prc": "275500"},
+                        {"cntr_tm": "20260811141500", "cur_prc": "241500"},
+                    ],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "Y", "next-key": "page-2-key"},
+            ),
+            # Page 2: older bars, server says that was the last page.
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [
+                        {"cntr_tm": "20260811140000", "cur_prc": "241000"},
+                        {"cntr_tm": "20260624104500", "cur_prc": "235000"},
+                    ],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "N", "next-key": ""},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    response = client.get_minute_chart_history("005930", "20260922", tic_scope="15")
+
+    rows = response["stk_min_pole_chart_qry"]
+    assert [row["cntr_tm"] for row in rows] == [
+        "20260922180000",
+        "20260811141500",
+        "20260811140000",
+        "20260624104500",
+    ]
+    # token call + 2 chart pages
+    assert len(session.calls) == 3
+
+    first_call_headers = session.calls[1]["headers"]
+    assert first_call_headers["cont-yn"] == "N"
+    assert first_call_headers["next-key"] == ""
+
+    second_call_headers = session.calls[2]["headers"]
+    assert second_call_headers["cont-yn"] == "Y"
+    assert second_call_headers["next-key"] == "page-2-key"
+    # stk_cd/tic_scope/upd_stkpc_tp/base_dt stay the same across pages.
+    assert session.calls[2]["json"] == session.calls[1]["json"]
+
+
+def test_minute_chart_history_stops_at_stop_date_and_trims_older_rows() -> None:
+    """stop_date must both (a) stop requesting further pages once a page's
+    oldest bar reaches it, and (b) trim any rows older than it that were
+    already fetched in that same page -- pages aren't aligned to day
+    boundaries so a page can straddle stop_date."""
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "token": "access-token",
+                    "token_type": "bearer",
+                    "expires_dt": "20991231235959",
+                    "return_code": 0,
+                }
+            ),
+            # Single page whose oldest bar is already <= stop_date.
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [
+                        {"cntr_tm": "20260922180000", "cur_prc": "275500"},
+                        {"cntr_tm": "20260901093000", "cur_prc": "260000"},
+                        {"cntr_tm": "20260811141500", "cur_prc": "241500"},
+                    ],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "Y", "next-key": "page-2-key"},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    response = client.get_minute_chart_history(
+        "005930", "20260922", tic_scope="15", stop_date="20260901"
+    )
+
+    rows = response["stk_min_pole_chart_qry"]
+    # 20260811 row is older than stop_date=20260901 and must be trimmed.
+    assert [row["cntr_tm"] for row in rows] == ["20260922180000", "20260901093000"]
+    # token call + exactly 1 chart page -- must not request page 2 even
+    # though the server reported cont-yn=Y, because stop_date was reached.
+    assert len(session.calls) == 2
+
+
+def test_minute_chart_history_stops_after_single_page_when_no_continuation() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "token": "access-token",
+                    "token_type": "bearer",
+                    "expires_dt": "20991231235959",
+                    "return_code": 0,
+                }
+            ),
+            FakeResponse(
+                {
+                    "stk_cd": "005930",
+                    "stk_min_pole_chart_qry": [{"cntr_tm": "20260922180000"}],
+                    "return_code": 0,
+                },
+                headers={"cont-yn": "N", "next-key": ""},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    response = client.get_minute_chart_history("005930", "20260922")
+
+    assert len(response["stk_min_pole_chart_qry"]) == 1
+    assert len(session.calls) == 2
+
+
+def test_minute_chart_history_rejects_malformed_stop_date() -> None:
+    client = KiwoomClient(_settings(), session=FakeSession([]))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="stop_date"):
+        client.get_minute_chart_history("005930", "20260922", stop_date="2026-09-01")

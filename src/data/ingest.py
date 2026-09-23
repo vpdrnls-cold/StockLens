@@ -21,6 +21,23 @@ class HistoricalIngestionResult:
 
 
 @dataclass(frozen=True)
+class MinuteChartIngestionResult:
+    """Location and row count produced by one raw minute-chart ingestion run.
+
+    Raw only, deliberately: there is no normalized minute-bar model yet.
+    Decision-timestamp cutoff, regular-session-vs-NXT/overtime
+    filtering, and the intraday feature schema are still open design
+    questions (Phase H, as of 2026-09-22) -- do not build normalization
+    on top of this until those are settled. See
+    ``ingest_kiwoom_daily_chart`` for the raw + normalized pattern this
+    is expected to grow into once they are.
+    """
+
+    raw_path: Path
+    row_count: int
+
+
+@dataclass(frozen=True)
 class BatchIngestionItemResult:
     """The outcome of one symbol within a sequential historical batch."""
 
@@ -48,6 +65,35 @@ def ingest_kiwoom_daily_chart(
     raw_path = historical_storage.save_raw_ka10081(stock_code, raw_response)
     normalized_path = historical_storage.save_daily_bars(stock_code, bars)
     return HistoricalIngestionResult(raw_path, normalized_path, len(bars))
+
+
+def ingest_kiwoom_minute_chart_raw(
+    client: KiwoomClient,
+    stock_code: str,
+    base_date: str,
+    stop_date: str,
+    *,
+    tic_scope: str = "15",
+    storage: HistoricalStorage | None = None,
+) -> MinuteChartIngestionResult:
+    """Fetch and store one ``ka10080`` minute-chart response, raw only.
+
+    ``stop_date`` is a required positional-style keyword (not defaulted)
+    so a pilot run never silently walks further back into history than
+    intended -- see ``KiwoomClient.get_minute_chart_history``'s
+    ``stop_date`` documentation for why that matters for minute bars
+    specifically (unlike daily bars, full history would be enormous).
+    """
+    raw_response = client.get_minute_chart_history(
+        stock_code,
+        base_date,
+        tic_scope=tic_scope,
+        stop_date=stop_date,
+    )
+    historical_storage = storage or HistoricalStorage()
+    raw_path = historical_storage.save_raw_ka10080(stock_code, raw_response)
+    row_count = len(raw_response.get("stk_min_pole_chart_qry", []))
+    return MinuteChartIngestionResult(raw_path, row_count)
 
 
 def ingest_kiwoom_daily_chart_batch(

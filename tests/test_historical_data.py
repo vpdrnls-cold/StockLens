@@ -12,7 +12,7 @@ import pytest
 
 from src.data.normalization import HistoricalDataValidationError, normalize_ka10081_response
 from src.data.storage import HistoricalStorage
-from src.data.ingest import ingest_kiwoom_daily_chart_batch
+from src.data.ingest import ingest_kiwoom_daily_chart_batch, ingest_kiwoom_minute_chart_raw
 
 
 @pytest.fixture
@@ -100,6 +100,84 @@ def test_stores_raw_and_normalized_data_in_separate_paths(
     assert normalized[0]["trade_date"] == "2026-08-28"
     assert "cur_prc" not in normalized[0]
     assert normalized[0]["close_price"] == 257000
+
+
+def test_stores_raw_minute_chart_data(tmp_path: Path) -> None:
+    """Mirrors test_stores_raw_and_normalized_data_in_separate_paths, raw
+    only -- there is no normalized minute-bar model yet."""
+    storage = HistoricalStorage(tmp_path / "data")
+    response = {
+        "stk_cd": "005930",
+        "stk_min_pole_chart_qry": [
+            {"cntr_tm": "20260922180000", "cur_prc": "+275500"},
+        ],
+        "return_code": 0,
+    }
+
+    raw_path = storage.save_raw_ka10080("005930", response)
+
+    assert "raw/kiwoom/ka10080/005930" in raw_path.as_posix()
+    assert json.loads(raw_path.read_text(encoding="utf-8")) == response
+
+
+class FakeMinuteChartClient:
+    """A test double that supplies a fixed ka10080-shaped response and
+    records the stop_date/tic_scope it was called with."""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+        self.calls: list[dict] = []
+
+    def get_minute_chart_history(
+        self,
+        stock_code: str,
+        base_date: str,
+        *,
+        tic_scope: str = "15",
+        stop_date: str | None = None,
+    ) -> dict:
+        self.calls.append(
+            {
+                "stock_code": stock_code,
+                "base_date": base_date,
+                "tic_scope": tic_scope,
+                "stop_date": stop_date,
+            }
+        )
+        return {"stk_cd": stock_code, "stk_min_pole_chart_qry": list(self._rows)}
+
+
+def test_ingest_minute_chart_raw_stores_response_and_passes_stop_date(
+    tmp_path: Path,
+) -> None:
+    client = FakeMinuteChartClient(
+        rows=[
+            {"cntr_tm": "20260922180000", "cur_prc": "+275500"},
+            {"cntr_tm": "20260622093000", "cur_prc": "+235000"},
+        ]
+    )
+    storage = HistoricalStorage(tmp_path / "data")
+
+    result = ingest_kiwoom_minute_chart_raw(
+        client,  # type: ignore[arg-type]
+        "005930",
+        "20260922",
+        "20260622",
+        storage=storage,
+    )
+
+    assert result.row_count == 2
+    assert "raw/kiwoom/ka10080/005930" in result.raw_path.as_posix()
+    assert client.calls == [
+        {
+            "stock_code": "005930",
+            "base_date": "20260922",
+            "tic_scope": "15",
+            "stop_date": "20260622",
+        }
+    ]
+    stored = json.loads(result.raw_path.read_text(encoding="utf-8"))
+    assert len(stored["stk_min_pole_chart_qry"]) == 2
 
 
 class FakeDailyChartClient:

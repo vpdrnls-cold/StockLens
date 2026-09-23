@@ -76,8 +76,16 @@ class KiwoomClient:
     _TOKEN_PATH = "/oauth2/token"
     _STOCK_INFO_PATH = "/api/dostk/stkinfo"
     _DAILY_CHART_PATH = "/api/dostk/chart"
+    # ka10080 (minute chart) shares the same endpoint path as ka10081
+    # (daily chart); they are distinguished by the "api-id" header only.
+    _MINUTE_CHART_PATH = _DAILY_CHART_PATH
     _SECTOR_PATH = "/api/dostk/sect"
     _JSON_CONTENT_TYPE = "application/json;charset=UTF-8"
+
+    # Documented `tic_scope` values for ka10080 (minutes per bar).
+    _MINUTE_CHART_TIC_SCOPES = frozenset(
+        {"1", "3", "5", "10", "15", "30", "45", "60"}
+    )
 
     # Kiwoom returns HTTP 429 (return_code=5, "허용된 요청 개수를
     # 초과하였습니다") when a client sends requests faster than its
@@ -277,6 +285,201 @@ class KiwoomClient:
             merged_response = {"stk_cd": normalized_code}
 
         merged_response["stk_dt_pole_chart_qry"] = all_rows
+        return merged_response
+
+    def get_minute_chart_page(
+        self,
+        stock_code: str,
+        base_date: str,
+        *,
+        tic_scope: str = "15",
+        adjusted_price_type: str = "1",
+        cont_yn: str = "N",
+        next_key: str = "",
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+        """Return one raw ``ka10080`` minute-chart page and its response headers.
+
+        This is deliberately a single-page, low-level call -- unlike
+        ``get_daily_chart``, it does NOT follow ``cont-yn``/``next-key``
+        continuation automatically. ka10080's real pagination semantics
+        (does one page cover only ``base_date``, or does continuation
+        walk backward across many days the way ka10081 does? does a
+        finer ``tic_scope`` change how much history one page returns?)
+        have not yet been confirmed against the live API. Exposing the
+        response headers here lets a caller (see
+        ``scripts/check_kiwoom_minute_chart.py``) inspect that behavior
+        directly instead of assuming it.
+
+        Do not build an accumulating multi-page ingestion method on top
+        of this until that behavior is confirmed from real output --
+        see AGENTS.md section 8 ("inspect the exact request/response
+        schema ... rather than guessing").
+
+        ``base_date`` must use the ``YYYYMMDD`` format documented by
+        Kiwoom. ``tic_scope`` is the documented minute-bar width:
+        ``"1"``, ``"3"``, ``"5"``, ``"10"``, ``"15"``, ``"30"``,
+        ``"45"``, or ``"60"``. ``adjusted_price_type`` is the documented
+        ``upd_stkpc_tp`` value: ``"0"`` for unadjusted prices or ``"1"``
+        for adjusted prices. ``cont_yn``/``next_key`` let a caller pass
+        in the previous page's response headers to request the next
+        page manually.
+        """
+        normalized_code = stock_code.strip()
+        if not normalized_code:
+            raise ValueError("stock_code must not be empty.")
+        try:
+            datetime.strptime(base_date, "%Y%m%d")
+        except ValueError as error:
+            raise ValueError("base_date must use YYYYMMDD format.") from error
+        if tic_scope not in self._MINUTE_CHART_TIC_SCOPES:
+            raise ValueError(
+                "tic_scope must be one of "
+                f"{sorted(self._MINUTE_CHART_TIC_SCOPES, key=int)}."
+            )
+        if adjusted_price_type not in {"0", "1"}:
+            raise ValueError("adjusted_price_type must be '0' or '1'.")
+
+        token = self.authenticate()
+        headers = self._json_headers(
+            **{
+                "api-id": "ka10080",
+                "authorization": f"Bearer {token.value}",
+                "cont-yn": cont_yn,
+                "next-key": next_key,
+            }
+        )
+        return self._post(
+            self._MINUTE_CHART_PATH,
+            {
+                "stk_cd": normalized_code,
+                "tic_scope": tic_scope,
+                "upd_stkpc_tp": adjusted_price_type,
+                "base_dt": base_date,
+            },
+            headers,
+            stage="minute_chart",
+        )
+
+    def get_minute_chart_history(
+        self,
+        stock_code: str,
+        base_date: str,
+        *,
+        tic_scope: str = "15",
+        adjusted_price_type: str = "1",
+        stop_date: str | None = None,
+        max_pages: int = 60,
+    ) -> Mapping[str, Any]:
+        """Return the merged ``ka10080`` minute-chart history for one stock.
+
+        This follows ``cont-yn``/``next-key`` continuation the same way
+        ``get_daily_chart`` does, now confirmed against the live API
+        (2026-09-22, see ``scripts/check_kiwoom_minute_chart.py``): a
+        single ``ka10080`` page already spans roughly a month of
+        calendar dates (900 rows / ~30 dates at ``tic_scope="15"``), not
+        just ``base_date``, and successive pages page backward in time
+        with no overlap or gap at the boundary -- one page's oldest bar
+        and the next page's newest bar are exactly one ``tic_scope``
+        interval apart.
+
+        ``stop_date`` (``YYYYMMDD``) bounds how far back to collect:
+        pagination stops once a page's oldest bar falls on or before
+        ``stop_date``, and any rows older than ``stop_date`` are
+        trimmed from the result. Unlike daily bars, minute-bar history
+        for the full ~20-year training window would be enormous, so
+        Phase H pilots should always pass an explicit ``stop_date``
+        rather than silently walking all the way back to listing.
+        Leave ``stop_date=None`` only when full history is genuinely
+        wanted.
+
+        ``max_pages`` remains a safety bound against a server-side
+        continuation bug (same role as in ``get_daily_chart``), not a
+        tuning knob for how much history to fetch -- use ``stop_date``
+        for that.
+        """
+        normalized_code = stock_code.strip()
+        if not normalized_code:
+            raise ValueError("stock_code must not be empty.")
+        try:
+            datetime.strptime(base_date, "%Y%m%d")
+        except ValueError as error:
+            raise ValueError("base_date must use YYYYMMDD format.") from error
+        if stop_date is not None:
+            try:
+                datetime.strptime(stop_date, "%Y%m%d")
+            except ValueError as error:
+                raise ValueError("stop_date must use YYYYMMDD format.") from error
+        if max_pages <= 0:
+            raise ValueError("max_pages must be positive.")
+
+        all_rows: list[Any] = []
+        merged_response: dict[str, Any] | None = None
+        cont_yn = "N"
+        next_key = ""
+
+        for page in range(max_pages):
+            if page > 0:
+                time.sleep(self._PAGE_REQUEST_INTERVAL_SECONDS)
+
+            response, response_headers = self.get_minute_chart_page(
+                normalized_code,
+                base_date,
+                tic_scope=tic_scope,
+                adjusted_price_type=adjusted_price_type,
+                cont_yn=cont_yn,
+                next_key=next_key,
+            )
+
+            rows = response.get("stk_min_pole_chart_qry", [])
+            if not isinstance(rows, list):
+                raise KiwoomTransportError(
+                    "stk_min_pole_chart_qry must be a list."
+                )
+            all_rows.extend(rows)
+
+            if merged_response is None:
+                merged_response = dict(response)
+
+            logger.info(
+                "Kiwoom minute_chart page=%d stock=%s tic_scope=%s rows=%d cumulative=%d",
+                page + 1,
+                normalized_code,
+                tic_scope,
+                len(rows),
+                len(all_rows),
+            )
+
+            cont_yn = str(response_headers.get("cont-yn", "N")).strip().upper()
+            next_key = str(response_headers.get("next-key", "")).strip()
+
+            oldest_date_in_page = _oldest_cntr_date(rows)
+            reached_stop_date = (
+                stop_date is not None
+                and oldest_date_in_page is not None
+                and oldest_date_in_page <= stop_date
+            )
+            if reached_stop_date or cont_yn != "Y" or not next_key or not rows:
+                break
+        else:
+            logger.warning(
+                "Kiwoom minute_chart stock=%s stopped at max_pages=%d "
+                "with continuation still available -- history may be "
+                "incomplete.",
+                normalized_code,
+                max_pages,
+            )
+
+        if merged_response is None:
+            merged_response = {"stk_cd": normalized_code}
+
+        if stop_date is not None:
+            all_rows = [
+                row
+                for row in all_rows
+                if str(row.get("cntr_tm", ""))[:8] >= stop_date
+            ]
+
+        merged_response["stk_min_pole_chart_qry"] = all_rows
         return merged_response
 
     def get_index_constituents(
@@ -479,6 +682,22 @@ class KiwoomClient:
 
         response_headers = getattr(http_response, "headers", {}) or {}
         return response, response_headers
+
+
+def _oldest_cntr_date(rows: list[Any]) -> str | None:
+    """Return the earliest ``YYYYMMDD`` date among a minute-chart page's rows.
+
+    Rows are observed to arrive newest-first (see
+    ``scripts/check_kiwoom_minute_chart.py``), but this does not assume
+    that ordering -- it takes the minimum over all rows so a
+    ``stop_date`` comparison is correct even if that ever changes.
+    """
+    dates = [
+        str(row.get("cntr_tm", ""))[:8]
+        for row in rows
+        if len(str(row.get("cntr_tm", ""))) >= 8
+    ]
+    return min(dates) if dates else None
 
 
 def _parse_int(value: Any) -> int | None:
