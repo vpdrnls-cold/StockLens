@@ -101169,13 +101169,39 @@
     "stock_code": "011200",
     "trade_date": "2026-09-21",
     "open_price": 21000,
-    "high_price": 21000,
+    "high_price": 21150,
     "low_price": 20750,
-    "close_price": 20950,
-    "volume": 158723,
-    "trade_value_million_krw": 3313,
-    "previous_close_change": 150,
+    "close_price": 21050,
+    "volume": 472293,
+    "trade_value_million_krw": 9900,
+    "previous_close_change": 250,
     "previous_close_change_sign": 2,
-    "turnover_rate": "0.02"
+    "turnover_rate": "0.05"
+  },
+  {
+    "stock_code": "011200",
+    "trade_date": "2026-09-22",
+    "open_price": 21150,
+    "high_price": 21250,
+    "low_price": 20900,
+    "close_price": 21200,
+    "volume": 385779,
+    "trade_value_million_krw": 8134,
+    "previous_close_change": 100,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.04"
+  },
+  {
+    "stock_code": "011200",
+    "trade_date": "2026-09-23",
+    "open_price": 21200,
+    "high_price": 21300,
+    "low_price": 20700,
+    "close_price": 20850,
+    "volume": 562695,
+    "trade_value_million_krw": 11807,
+    "previous_close_change": -350,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.06"
   }
 ]

@@ -80265,13 +80265,39 @@
     "stock_code": "055550",
     "trade_date": "2026-09-21",
     "open_price": 111100,
-    "high_price": 113500,
+    "high_price": 114000,
     "low_price": 110000,
     "close_price": 113200,
-    "volume": 353210,
-    "trade_value_million_krw": 39620,
+    "volume": 1009788,
+    "trade_value_million_krw": 113974,
     "previous_close_change": 3100,
     "previous_close_change_sign": 2,
-    "turnover_rate": "0.08"
+    "turnover_rate": "0.22"
+  },
+  {
+    "stock_code": "055550",
+    "trade_date": "2026-09-22",
+    "open_price": 114100,
+    "high_price": 114300,
+    "low_price": 112200,
+    "close_price": 112800,
+    "volume": 730685,
+    "trade_value_million_krw": 82548,
+    "previous_close_change": -300,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.16"
+  },
+  {
+    "stock_code": "055550",
+    "trade_date": "2026-09-23",
+    "open_price": 112800,
+    "high_price": 113300,
+    "low_price": 109100,
+    "close_price": 110100,
+    "volume": 895919,
+    "trade_value_million_krw": 98783,
+    "previous_close_change": -3100,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.19"
   }
 ]

@@ -15,6 +15,30 @@ from src.features.engineering import FEATURE_COLUMNS, build_features
 DEFAULT_TARGET_HORIZON = 5
 TARGET_COLUMN = "target_return_5d"
 
+# Entry timing for the target (T-1 framing, Phase H):
+#   "close"     : target = close(t+h) / close(t) - 1
+#                 (legacy; assumes you can trade at t's close using t's
+#                 close-derived features -- not actually executable)
+#   "next_open" : target = close(t+h) / open(t+1) - 1
+#                 (features use information through t's close; the
+#                 position is entered at t+1's opening auction, which is
+#                 executable. Intraday diagnostic 2026-09-24 used this.)
+#
+# DEFAULT = "next_open" (2026-09-24). src/backtest/baseline.py has always
+# executed T+1 open entry -> T+holding_days close exit, so the legacy
+# "close" target trained the model on a return the engine never
+# realizes. "next_open" makes target_return_5d exactly the engine's
+# gross trade return (before costs). Top-50 entry-timing IC check
+# (scripts/entry_timing_ic.py, train/validation only): feature IC ranks
+# nearly unchanged (rank corr 0.97 / 0.93), most |IC| larger, gap-based
+# reversal only visible under next_open.
+#
+# Results recorded before this change (CURRENT_STATUS items up to the
+# Phase H entry-timing check) used "close"; pass entry="close" to
+# reproduce them.
+ENTRY_MODES = ("close", "next_open")
+DEFAULT_ENTRY_MODE = "next_open"
+
 # Split boundaries cover the full 5-stock overlap window
 # (2002-10-29 ~ 2026-09-16, confirmed via scripts/check_data_coverage.py
 # -- bounded by 035420's 2002-10-29 listing date). Roughly 70/15/15 by
@@ -36,17 +60,22 @@ def build_stock_dataset(
     bars: Sequence[DailyBar],
     *,
     target_horizon: int = DEFAULT_TARGET_HORIZON,
+    entry: str = DEFAULT_ENTRY_MODE,
 ) -> pd.DataFrame:
     """Build one stock's feature-and-target dataset.
 
-    Features at time t use information available at or before t.
-    The target is the forward return from t's close to t+horizon's close.
+    Features at time t use information available at or before t's close.
+    The target is the forward return to t+horizon's close, entered at
+    t's close (``entry="close"``) or at t+1's open (``entry="next_open"``).
     """
     if not bars:
         raise ValueError("bars must not be empty.")
 
     if target_horizon <= 0:
         raise ValueError("target_horizon must be positive.")
+
+    if entry not in ENTRY_MODES:
+        raise ValueError(f"entry must be one of {ENTRY_MODES}.")
 
     stock_codes = {bar.stock_code for bar in bars}
     if len(stock_codes) != 1:
@@ -56,16 +85,30 @@ def build_stock_dataset(
 
     features = build_features(bars)
 
-    close_prices = (
-        pd.Series(
-            [bar.close_price for bar in bars],
-            index=[bar.trade_date for bar in bars],
-            dtype="float64",
-        )
+    # Sort by date before shifting: build_features() sorts internally,
+    # but the target series must follow the same chronological order or
+    # shift(-h) would pair the wrong days.
+    ordered_bars = sorted(bars, key=lambda bar: bar.trade_date)
+    trade_dates = [bar.trade_date for bar in ordered_bars]
+
+    close_prices = pd.Series(
+        [bar.close_price for bar in ordered_bars],
+        index=trade_dates,
+        dtype="float64",
     )
 
+    if entry == "close":
+        entry_prices = close_prices
+    else:  # "next_open"
+        open_prices = pd.Series(
+            [bar.open_price for bar in ordered_bars],
+            index=trade_dates,
+            dtype="float64",
+        )
+        entry_prices = open_prices.shift(-1)
+
     target = (
-        close_prices.shift(-target_horizon) / close_prices - 1.0
+        close_prices.shift(-target_horizon) / entry_prices - 1.0
     )
 
     target.index.name = "trade_date"
@@ -93,6 +136,7 @@ def build_combined_dataset(
     stock_bars: dict[str, Sequence[DailyBar]],
     *,
     target_horizon: int = DEFAULT_TARGET_HORIZON,
+    entry: str = DEFAULT_ENTRY_MODE,
 ) -> pd.DataFrame:
     """Build and concatenate datasets for multiple stocks."""
     if not stock_bars:
@@ -116,6 +160,7 @@ def build_combined_dataset(
         dataset = build_stock_dataset(
             bars,
             target_horizon=target_horizon,
+            entry=entry,
         )
 
         datasets.append(dataset)

@@ -124323,12 +124323,38 @@
     "trade_date": "2026-09-21",
     "open_price": 380500,
     "high_price": 380500,
-    "low_price": 371500,
-    "close_price": 373000,
-    "volume": 86873,
-    "trade_value_million_krw": 32512,
-    "previous_close_change": -6000,
+    "low_price": 370500,
+    "close_price": 374500,
+    "volume": 211851,
+    "trade_value_million_krw": 79045,
+    "previous_close_change": -4500,
     "previous_close_change_sign": 5,
-    "turnover_rate": "0.10"
+    "turnover_rate": "0.24"
+  },
+  {
+    "stock_code": "012330",
+    "trade_date": "2026-09-22",
+    "open_price": 377500,
+    "high_price": 384500,
+    "low_price": 371000,
+    "close_price": 373500,
+    "volume": 268939,
+    "trade_value_million_krw": 101444,
+    "previous_close_change": 500,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.30"
+  },
+  {
+    "stock_code": "012330",
+    "trade_date": "2026-09-23",
+    "open_price": 379000,
+    "high_price": 379500,
+    "low_price": 365000,
+    "close_price": 369000,
+    "volume": 187168,
+    "trade_value_million_krw": 69163,
+    "previous_close_change": -3500,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.21"
   }
 ]

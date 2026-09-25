@@ -66472,13 +66472,39 @@
     "stock_code": "086280",
     "trade_date": "2026-09-21",
     "open_price": 203000,
-    "high_price": 203000,
+    "high_price": 204000,
     "low_price": 198900,
-    "close_price": 199700,
-    "volume": 57545,
-    "trade_value_million_krw": 11495,
-    "previous_close_change": -3800,
+    "close_price": 204000,
+    "volume": 157521,
+    "trade_value_million_krw": 31679,
+    "previous_close_change": 500,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.21"
+  },
+  {
+    "stock_code": "086280",
+    "trade_date": "2026-09-22",
+    "open_price": 204000,
+    "high_price": 208500,
+    "low_price": 201500,
+    "close_price": 202500,
+    "volume": 153696,
+    "trade_value_million_krw": 31231,
+    "previous_close_change": -500,
     "previous_close_change_sign": 5,
-    "turnover_rate": "0.08"
+    "turnover_rate": "0.20"
+  },
+  {
+    "stock_code": "086280",
+    "trade_date": "2026-09-23",
+    "open_price": 203500,
+    "high_price": 203500,
+    "low_price": 194500,
+    "close_price": 198000,
+    "volume": 218216,
+    "trade_value_million_krw": 43092,
+    "previous_close_change": -5000,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.29"
   }
 ]
