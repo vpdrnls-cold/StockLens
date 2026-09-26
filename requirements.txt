@@ -6,3 +6,4 @@ pydantic
 scikit-learn
 xgboost==3.4.1
 pytest
+matplotlib

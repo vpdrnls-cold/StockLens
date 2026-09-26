@@ -20,6 +20,10 @@ For every strategy it reports, per 5-day holding period:
 
 Only train/validation dates are used -- the test period is never touched.
 
+Every run also saves the net per-period returns, trades and the daily rank IC
+of the ml/reversal scores to reports/runs/ (src/reporting/run_log.py); plot
+them with scripts/plot_run.py.
+
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python3 scripts/walk_forward_backtest_compare.py
 """
 
@@ -47,9 +51,10 @@ from src.data.dataset import (
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
 from src.features.engineering import FEATURE_COLUMNS
-from src.ml.cross_section import rank_by_date
+from src.ml.cross_section import daily_rank_ic, rank_by_date
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from src.models.predict import train_model
+from src.reporting.run_log import RunRecorder
 
 RAW_SCALE_FEATURES = {
     "sma_5", "sma_20", "sma_60", "macd", "macd_signal", "macd_hist",
@@ -146,7 +151,7 @@ def period_returns(trades, column: str) -> pd.Series:
     return df.groupby("decision_date")["contribution"].sum().sort_index()
 
 
-def evaluate(strategy_name, score_fn, data_by_stock, benchmark, top_n) -> dict:
+def evaluate(strategy_name, score_fn, data_by_stock, benchmark, top_n) -> tuple[dict, list]:
     gross_trades = run_baseline_backtest(data_by_stock, GROSS_CONFIG, score_fn=score_fn, top_n=top_n)
     net_trades = run_baseline_backtest(data_by_stock, NET_CONFIG, score_fn=score_fn, top_n=top_n)
 
@@ -156,7 +161,7 @@ def evaluate(strategy_name, score_fn, data_by_stock, benchmark, top_n) -> dict:
     n = len(excess)
     t_stat = float(excess.mean() / (excess.std(ddof=1) / np.sqrt(n))) if n > 2 else float("nan")
 
-    return {
+    row = {
         "strategy": strategy_name,
         "top_n": top_n,
         "periods": n,
@@ -167,9 +172,15 @@ def evaluate(strategy_name, score_fn, data_by_stock, benchmark, top_n) -> dict:
         "net_cum": float(net_perf["total_return"]),
         "net_mdd": float(net_perf["max_drawdown"]),
     }
+    return row, net_trades
 
 
-def run(dataset: pd.DataFrame, windows=WINDOWS, top_ns=TOP_NS) -> pd.DataFrame:
+def run(
+    dataset: pd.DataFrame,
+    windows=WINDOWS,
+    top_ns=TOP_NS,
+    recorder: RunRecorder | None = None,
+) -> pd.DataFrame:
     rows = []
     for label, train_end, val_start, val_end in windows:
         splits = split_by_time(
@@ -186,7 +197,19 @@ def run(dataset: pd.DataFrame, windows=WINDOWS, top_ns=TOP_NS) -> pd.DataFrame:
             feature_columns=ALL_19, params=DETERMINISTIC_PARAMS,
         )
         print(f"  ML model best_iteration={trained.best_iteration}")
-        ml_score_fn = make_model_score_fn(predictions_for_dataset(trained, splits.validation))
+        ml_predictions = predictions_for_dataset(trained, splits.validation)
+        ml_score_fn = make_model_score_fn(ml_predictions)
+
+        if recorder is not None:
+            # Daily rank IC against the raw target, validation dates only.
+            # momentum's IC is exactly -reversal's, so it is not stored twice.
+            scored = splits.validation[["trade_date", "stock_code", "target_return_5d", "return_5d"]].copy()
+            scored["trade_date"] = pd.to_datetime(scored["trade_date"])
+            scored = scored.merge(ml_predictions, on=["trade_date", "stock_code"], how="left")
+            scored["reversal_score"] = -scored["return_5d"]
+            scored = scored.dropna(subset=["target_return_5d"])
+            recorder.add_ic(label, "ml", daily_rank_ic(scored, "predicted_return"))
+            recorder.add_ic(label, "reversal", daily_rank_ic(scored, "reversal_score"))
 
         data_by_stock = to_data_by_stock(splits.validation)
         benchmark = universe_average_gross(data_by_stock)
@@ -198,9 +221,11 @@ def run(dataset: pd.DataFrame, windows=WINDOWS, top_ns=TOP_NS) -> pd.DataFrame:
         }
         for top_n in top_ns:
             for name, score_fn in strategies.items():
-                row = evaluate(name, score_fn, data_by_stock, benchmark, top_n)
+                row, net_trades = evaluate(name, score_fn, data_by_stock, benchmark, top_n)
                 row["window"] = label
                 rows.append(row)
+                if recorder is not None:
+                    recorder.add_trades(label, f"{name} top_n={top_n}", net_trades)
 
     return pd.DataFrame(rows)
 
@@ -219,7 +244,20 @@ def _print_table(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    results = run(load_priced_dataset())
+    universe = get_universe()
+    recorder = RunRecorder(
+        "walk_forward_backtest_compare",
+        meta={
+            "script": "scripts/walk_forward_backtest_compare.py",
+            "universe_size": len(universe),
+            "top_ns": list(TOP_NS),
+            "windows": [w[0] for w in WINDOWS],
+            "split": "validation only",
+            "returns": "net of fees, tax and slippage (NET_CONFIG)",
+        },
+    )
+    results = run(load_priced_dataset(), recorder=recorder)
+    recorder.save()
 
     for label in results["window"].unique():
         print("\n" + "=" * 100)

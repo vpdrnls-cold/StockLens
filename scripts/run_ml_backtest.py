@@ -41,9 +41,10 @@ from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
 from src.features.engineering import FEATURE_COLUMNS, SELECTED_FEATURES
 from src.eval.test_lock import confirm_final_test_use
-from src.ml.cross_section import rank_by_date
+from src.ml.cross_section import daily_rank_ic, rank_by_date
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from src.models.predict import train_model
+from src.reporting.run_log import RunRecorder
 
 # core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe
 # (see src/data/universe.py).
@@ -210,6 +211,29 @@ def main() -> None:
 
     print("=== ML strategy trades ===")
     print(trades_to_dataframe(model_trades).to_string(index=False))
+
+    # Keep the time series of this (already confirmed) test run so it can be
+    # plotted later with scripts/plot_run.py WITHOUT re-running this script --
+    # re-running it is a new test access; re-plotting a saved run is not.
+    scored = splits.test[["trade_date", "stock_code", "target_return_5d"]].copy()
+    scored["trade_date"] = pd.to_datetime(scored["trade_date"])
+    scored = scored.merge(predictions, on=["trade_date", "stock_code"], how="left")
+    scored = scored.dropna(subset=["target_return_5d"])
+
+    recorder = RunRecorder(
+        "run_ml_backtest_test",
+        meta={
+            "script": "scripts/run_ml_backtest.py",
+            "split": "TEST (confirmed via STOCKLENS_CONFIRM_FINAL_TEST)",
+            "universe_size": len(STOCK_CODES),
+            "top_n": TOP_N,
+            "best_iteration": trained.best_iteration,
+        },
+    )
+    recorder.add_trades("test", "momentum", baseline_trades)
+    recorder.add_trades("test", "ml", model_trades)
+    recorder.add_ic("test", "ml", daily_rank_ic(scored, "predicted_return"))
+    recorder.save()
 
 
 if __name__ == "__main__":

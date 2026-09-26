@@ -32,3 +32,6 @@ htmlcov/
 data/raw/
 # Derived datasets (regenerable with scripts/build_ml_dataset.py)
 data/processed/*.csv
+
+# Saved experiment time series + figures (regenerable; see src/reporting/run_log.py)
+reports/runs/
