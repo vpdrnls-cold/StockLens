@@ -28,6 +28,16 @@ Pre-registered decisions (primary metric: daily rank IC vs the raw 5-day target)
   Everything else -- beta-neutral IC, net/gross return, MDD, hit rate, turnover,
   excess over univ_ew, monthly IC -- is reported for interpretation only.
 
+Tie-break sensitivity (item 52, added 2026-09-28 before any forward date was seen)
+  The frozen model (9 depth-2 trees) gives only ~8 distinct scores per date, so
+  a large part of the top-10 is decided by the engine's tie rule (stable sort ->
+  lower stock code first). That rule stays the reported strategy (it is part of
+  the pre-registration). In addition, daily and overlay are re-run under
+  TIE_PERMUTATIONS random stock orders (fixed TIE_SEED) and the net-return
+  distribution is reported, with where the code-ascending result falls in it.
+  Interpretation only -- NOT used by D2/I6. IC is unaffected (ties get average
+  ranks), so the decisions cannot change.
+
 Interpretation limit (item 46): ~60 decision dates are ~12 non-overlapping
 5-day periods, SE(mean IC) ~ 0.06. "Not rejected" is the strongest possible
 conclusion; nothing here proves an improvement, and results are limited to
@@ -39,6 +49,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from scripts.experiment_intraday_overlay_dev import (
@@ -72,6 +83,9 @@ from src.reporting.run_log import RunRecorder
 CALLER = "evaluate_forward_holdout.py"
 OVERLAY_W = CANDIDATE_W  # 0.5, fixed by items 48/49
 MIN_INTRADAY_COVERAGE = 0.80  # below this the overlay is mostly the daily score -> warn
+STRATEGY_COLS = (("daily", "score_w0.0"), ("overlay", f"score_w{OVERLAY_W}"))
+TIE_PERMUTATIONS = 20  # item 52, fixed before the forward look
+TIE_SEED = 20260928
 
 
 def evaluate(part: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
@@ -83,7 +97,7 @@ def evaluate(part: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
     univ_cum = float((1.0 + bench).prod() - 1.0)
 
     rows, trades, ics = [], {}, {}
-    for name, col in (("daily", "score_w0.0"), ("overlay", f"score_w{OVERLAY_W}")):
+    for name, col in STRATEGY_COLS:
         scores = part[["trade_date", "stock_code", col]].rename(columns={col: "predicted_return"})
         score_fn = make_model_score_fn(scores)
         net, turnover = run_buffered_backtest_with_turnover(data_by_stock, BUFFERED_CONFIG, score_fn=score_fn, top_n=TOP_N)
@@ -122,6 +136,71 @@ def verdicts(res: pd.DataFrame) -> dict[str, object]:
     }
 
 
+def tie_orders(codes: list[str], n: int = TIE_PERMUTATIONS, seed: int = TIE_SEED) -> list[list[str]]:
+    """``n`` random stock orders; the engine breaks score ties by dict order."""
+    rng = np.random.default_rng(seed)
+    return [[str(c) for c in rng.permutation(sorted(codes))] for _ in range(n)]
+
+
+def tie_stats(part: pd.DataFrame, col: str, top_n: int = TOP_N) -> dict[str, float]:
+    """Per-date mean of distinct scores and of stocks scoring >= the top_n-th score."""
+    distinct, at_or_above = [], []
+    for _, s in part.groupby("trade_date")[col]:
+        s = s.dropna()
+        if len(s) < top_n:
+            continue
+        distinct.append(s.nunique())
+        at_or_above.append(int((s >= s.nlargest(top_n).iloc[-1]).sum()))
+    return {
+        "distinct_per_date": float(np.mean(distinct)) if distinct else float("nan"),
+        "at_or_above_topn": float(np.mean(at_or_above)) if at_or_above else float("nan"),
+    }
+
+
+def tie_sensitivity(
+    part: pd.DataFrame,
+    strategies: tuple[tuple[str, str], ...] = STRATEGY_COLS,
+    n: int = TIE_PERMUTATIONS,
+    seed: int = TIE_SEED,
+) -> pd.DataFrame:
+    """Net results of each buffered strategy under ``n`` random tie-break orders."""
+    part = part.dropna(subset=["target_return_5d"])
+    data_by_stock = _to_data_by_stock(part)
+    orders = tie_orders(list(data_by_stock), n, seed)
+    rows = []
+    for name, col in strategies:
+        scores = part[["trade_date", "stock_code", col]].rename(columns={col: "predicted_return"})
+        score_fn = make_model_score_fn(scores)
+        for i, order in enumerate(orders):
+            shuffled = {c: data_by_stock[c] for c in order}
+            net, turnover = run_buffered_backtest_with_turnover(shuffled, BUFFERED_CONFIG, score_fn=score_fn, top_n=TOP_N)
+            perf = calculate_performance(net)
+            rows.append({"strategy": name, "perm": i, "net_cum": perf["total_return"], "mdd": perf["max_drawdown"],
+                         "hit": perf["win_rate"], "entries": turnover["entries_per_period"]})
+    return pd.DataFrame(rows)
+
+
+def summarize_ties(
+    sens: pd.DataFrame,
+    res: pd.DataFrame,
+    part: pd.DataFrame,
+    strategies: tuple[tuple[str, str], ...] = STRATEGY_COLS,
+) -> pd.DataFrame:
+    """Distribution of net return over tie orders vs the code-ascending (reported) result."""
+    base = res.set_index("strategy")
+    rows = []
+    for name, col in strategies:
+        d = sens.loc[sens["strategy"] == name, "net_cum"]
+        code_asc = float(base.loc[name, "net_cum"])
+        rows.append({
+            "strategy": name, **tie_stats(part, col), "code_asc": code_asc,
+            "min": float(d.min()), "median": float(d.median()), "max": float(d.max()), "std": float(d.std()),
+            "code_asc_pctile": float((d < code_asc).mean() + 0.5 * (d == code_asc).mean()),
+            "mdd_worst": float(sens.loc[sens["strategy"] == name, "mdd"].min()),
+        })
+    return pd.DataFrame(rows)
+
+
 def monthly_ic(ics: dict[str, pd.Series]) -> pd.DataFrame:
     return pd.DataFrame({k: v.groupby(v.index.to_period("M")).mean() for k, v in ics.items()})
 
@@ -155,12 +234,16 @@ def main() -> None:
 
     res, trades, ics = evaluate(part)
     v = verdicts(res)
+    sens = tie_sensitivity(part)
+    ties = summarize_ties(sens, res, part)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     res.to_csv(out / "forward_results.csv", index=False, encoding="utf-8-sig")
     monthly = monthly_ic(ics)
     monthly.to_csv(out / "forward_monthly_ic.csv", encoding="utf-8-sig")
+    sens.to_csv(out / "forward_tie_permutations.csv", index=False, encoding="utf-8-sig")
+    ties.to_csv(out / "forward_tie_sensitivity.csv", index=False, encoding="utf-8-sig")
 
     print("\n" + "=" * 112)
     print(f"FORWARD HOLDOUT (once)   top_n={TOP_N}, buffer={BUFFER_MULTIPLIER}, overlay w={OVERLAY_W}, "
@@ -169,6 +252,10 @@ def main() -> None:
     print(res.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
     print("\nmonthly IC (info only):")
     print(monthly.to_string(float_format=lambda x: f"{x:+.4f}"))
+
+    print(f"\ntie-break sensitivity (info only, not used by D2/I6): net_cum over {TIE_PERMUTATIONS} random "
+          f"stock orders (seed {TIE_SEED}); code_asc = the reported rule")
+    print(ties.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
 
     print("\n" + "=" * 112)
     print("PRE-REGISTERED DECISIONS")
@@ -182,13 +269,15 @@ def main() -> None:
     recorder = RunRecorder("forward_holdout", meta={
         "script": "scripts/evaluate_forward_holdout.py", "top_n": TOP_N, "buffer": BUFFER_MULTIPLIER,
         "overlay_w": OVERLAY_W, "best_iteration": trained.best_iteration, **v,
+        "tie_permutations": TIE_PERMUTATIONS, "tie_seed": TIE_SEED,
     })
     for name, t in trades.items():
         recorder.add_trades("forward", name, t)
     for name, ic in ics.items():
         recorder.add_ic("forward", name, ic)
     recorder.save()
-    print(f"\nsaved: {out / 'forward_results.csv'}, {out / 'forward_monthly_ic.csv'}")
+    print(f"\nsaved: {out / 'forward_results.csv'}, {out / 'forward_monthly_ic.csv'}, "
+          f"{out / 'forward_tie_sensitivity.csv'}, {out / 'forward_tie_permutations.csv'}")
 
 
 if __name__ == "__main__":
