@@ -24321,5 +24321,18 @@
     "previous_close_change": -250,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.19"
+  },
+  {
+    "stock_code": "316140",
+    "trade_date": "2026-09-28",
+    "open_price": 36400,
+    "high_price": 36700,
+    "low_price": 35650,
+    "close_price": 36425,
+    "volume": 1029755,
+    "trade_value_million_krw": 37255,
+    "previous_close_change": 1075,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.14"
   }
 ]

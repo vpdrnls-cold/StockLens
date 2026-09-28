@@ -70,3 +70,22 @@ def test_forward_requires_minimum_dates(monkeypatch: pytest.MonkeyPatch) -> None
 def test_unknown_segment_rejected() -> None:
     with pytest.raises(ValueError):
         select_segment(_frame("2025-09-01", "2025-10-01"), "test", caller="t")
+
+
+def test_calendar_keeps_dates_whose_label_ends_inside_the_segment() -> None:
+    # dataset rows stop 5 bar dates before the data end (no target there)
+    bars = pd.bdate_range("2026-06-01", "2026-09-23")
+    rows = _frame("2026-06-01", str(bars[-6].date()))
+    without = select_segment(rows, "dev", caller="t", horizon=5)
+    with_cal = select_segment(rows, "dev", caller="t", horizon=5, calendar=bars)
+    assert with_cal["trade_date"].max() == without["trade_date"].max()  # dev ends long before data end
+
+
+def test_calendar_restores_the_last_dates_of_an_open_segment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(FORWARD_ENV_VAR, "1")
+    bars = pd.bdate_range("2026-09-01", "2027-06-30")
+    rows = _frame("2026-09-01", str(bars[-6].date()))  # last 5 bar dates have no row
+    without = select_segment(rows, "forward", caller="t", horizon=5)
+    with_cal = select_segment(rows, "forward", caller="t", horizon=5, calendar=bars)
+    assert with_cal["trade_date"].max() == bars[-6]
+    assert without["trade_date"].max() < bars[-6]  # conservative default drops valid dates

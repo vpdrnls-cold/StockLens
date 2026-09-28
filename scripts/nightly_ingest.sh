@@ -12,6 +12,8 @@
 #   1. minute bars (ka10080, 15-min) for the top50 universe, last 10 days
 #   2. daily bars (ka10081) for the top50 universe -- FRIDAYS ONLY by default
 #   3. optional: mirror data/raw/kiwoom/ka10080 to $STOCKLENS_RAW_BACKUP_DIR
+#   4. whenever daily bars were refreshed (Fridays by default): write the
+#      paper-trading pick log reports/daily_picks/<date>.csv (scripts/recommend.py)
 #
 # Why daily bars are not fetched every night:
 #   ka10081 is requested with adjusted prices (upd_stkpc_tp=1), so every call
@@ -41,7 +43,7 @@ status=0
 {
   echo "=== $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST') nightly ingest start ==="
 
-  echo "--- [1/3] minute bars (ka10080) ---"
+  echo "--- [1/4] minute bars (ka10080) ---"
   "$PYTHON" scripts/ingest_kiwoom_minute_chart_universe.py --lookback-days 10 || status=1
 
   daily="${STOCKLENS_NIGHTLY_DAILY:-}"
@@ -49,18 +51,25 @@ status=0
     [[ "$(TZ=Asia/Seoul date +%u)" == "5" ]] && daily=1 || daily=0
   fi
   if [[ "$daily" == "1" ]]; then
-    echo "--- [2/3] daily bars (ka10081, full adjusted history) ---"
+    echo "--- [2/4] daily bars (ka10081, full adjusted history) ---"
     "$PYTHON" scripts/ingest_kiwoom_daily_chart_batch.py || status=1
   else
-    echo "--- [2/3] daily bars skipped (Fridays only; STOCKLENS_NIGHTLY_DAILY=1 to force) ---"
+    echo "--- [2/4] daily bars skipped (Fridays only; STOCKLENS_NIGHTLY_DAILY=1 to force) ---"
   fi
 
   if [[ -n "${STOCKLENS_RAW_BACKUP_DIR:-}" ]]; then
-    echo "--- [3/3] backup ka10080 raw -> $STOCKLENS_RAW_BACKUP_DIR ---"
+    echo "--- [3/4] backup ka10080 raw -> $STOCKLENS_RAW_BACKUP_DIR ---"
     mkdir -p "$STOCKLENS_RAW_BACKUP_DIR"
     rsync -a data/raw/kiwoom/ka10080/ "$STOCKLENS_RAW_BACKUP_DIR/ka10080/" || status=1
   else
-    echo "--- [3/3] backup skipped (STOCKLENS_RAW_BACKUP_DIR not set) ---"
+    echo "--- [3/4] backup skipped (STOCKLENS_RAW_BACKUP_DIR not set) ---"
+  fi
+
+  if [[ "$daily" == "1" ]]; then
+    echo "--- [4/4] recommendation log (scripts/recommend.py) ---"
+    "$PYTHON" scripts/recommend.py || status=1
+  else
+    echo "--- [4/4] recommendation skipped (daily bars not refreshed today) ---"
   fi
 
   echo "=== done, status=$status ==="

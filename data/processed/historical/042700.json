@@ -67910,5 +67910,18 @@
     "previous_close_change": 3000,
     "previous_close_change_sign": 2,
     "turnover_rate": "0.39"
+  },
+  {
+    "stock_code": "042700",
+    "trade_date": "2026-09-28",
+    "open_price": 240500,
+    "high_price": 245000,
+    "low_price": 237000,
+    "close_price": 238000,
+    "volume": 174938,
+    "trade_value_million_krw": 42130,
+    "previous_close_change": -5500,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.18"
   }
 ]

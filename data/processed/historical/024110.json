@@ -98382,5 +98382,18 @@
     "previous_close_change": 450,
     "previous_close_change_sign": 2,
     "turnover_rate": "0.19"
+  },
+  {
+    "stock_code": "024110",
+    "trade_date": "2026-09-28",
+    "open_price": 20300,
+    "high_price": 20950,
+    "low_price": 20300,
+    "close_price": 20900,
+    "volume": 576933,
+    "trade_value_million_krw": 11961,
+    "previous_close_change": 500,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.07"
   }
 ]

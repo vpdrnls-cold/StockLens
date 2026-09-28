@@ -101203,5 +101203,18 @@
     "previous_close_change": -350,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.06"
+  },
+  {
+    "stock_code": "011200",
+    "trade_date": "2026-09-28",
+    "open_price": 20850,
+    "high_price": 21350,
+    "low_price": 20850,
+    "close_price": 21250,
+    "volume": 382445,
+    "trade_value_million_krw": 8086,
+    "previous_close_change": 450,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.04"
   }
 ]

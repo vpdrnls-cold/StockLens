@@ -43,3 +43,11 @@ def test_decision_picks_best_dev_ic_among_passing() -> None:
                  ("dev", 0.5): 0.02, ("B1", 0.5): 0.02, ("B2", 0.5): 0.02, ("B3", 0.5): 0.02}
     chosen, _ = ov.decide(_results(both_pass))
     assert chosen == 0.25
+
+
+def test_i5_candidate_is_fixed_and_rule_is_sign_only() -> None:
+    assert ov.CANDIDATE_W == 0.5
+    res = pd.DataFrame({"w": [0.0, 0.5], "ic": [0.010, 0.011]})
+    assert ov.i5_verdict(res) == (pytest.approx(0.001), True)
+    res = pd.DataFrame({"w": [0.0, 0.5], "ic": [0.010, 0.009]})
+    assert ov.i5_verdict(res)[1] is False

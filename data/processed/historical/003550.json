@@ -142166,5 +142166,18 @@
     "previous_close_change": -3100,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.09"
+  },
+  {
+    "stock_code": "003550",
+    "trade_date": "2026-09-28",
+    "open_price": 115000,
+    "high_price": 115500,
+    "low_price": 112700,
+    "close_price": 113600,
+    "volume": 89105,
+    "trade_value_million_krw": 10122,
+    "previous_close_change": 1700,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.06"
   }
 ]

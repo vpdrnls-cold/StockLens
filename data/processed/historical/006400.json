@@ -142166,5 +142166,18 @@
     "previous_close_change": -8000,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.47"
+  },
+  {
+    "stock_code": "006400",
+    "trade_date": "2026-09-28",
+    "open_price": 525000,
+    "high_price": 540000,
+    "low_price": 524000,
+    "close_price": 530000,
+    "volume": 194214,
+    "trade_value_million_krw": 103491,
+    "previous_close_change": 9000,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.24"
   }
 ]

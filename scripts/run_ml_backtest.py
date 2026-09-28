@@ -114,6 +114,12 @@ def _load_priced_dataset() -> pd.DataFrame:
     return dataset.merge(prices, on=["trade_date", "stock_code"], how="left", validate="one_to_one")
 
 
+def trading_calendar() -> list[pd.Timestamp]:
+    """Every bar date in the universe's price files -- lets select_segment purge exactly (item 49)."""
+    storage = HistoricalStorage("data")
+    return sorted({pd.Timestamp(bar.trade_date) for code in STOCK_CODES for bar in storage.load_daily_bars(code)})
+
+
 def _to_data_by_stock(dataset: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return {
         str(code): group[["stock_code", "trade_date", "open_price", "close_price"]]
@@ -211,7 +217,9 @@ def main() -> None:
 
     # --- 2. forward holdout (locked) -------------------------------------------
     try:
-        forward = select_segment(dataset, "forward", caller="run_ml_backtest.py", horizon=5)
+        forward = select_segment(
+            dataset, "forward", caller="run_ml_backtest.py", horizon=5, calendar=trading_calendar()
+        )
     except (TestSetLockedError, IntradaySplitError) as locked:
         print(f"Forward holdout not evaluated: {locked}")
         return

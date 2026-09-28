@@ -142153,5 +142153,18 @@
     "previous_close_change": -2300,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.20"
+  },
+  {
+    "stock_code": "000270",
+    "trade_date": "2026-09-28",
+    "open_price": 116600,
+    "high_price": 117700,
+    "low_price": 115600,
+    "close_price": 117600,
+    "volume": 605167,
+    "trade_value_million_krw": 70534,
+    "previous_close_change": 2200,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.16"
   }
 ]

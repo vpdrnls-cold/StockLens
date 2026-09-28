@@ -124629,5 +124629,18 @@
     "previous_close_change": -400,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.24"
+  },
+  {
+    "stock_code": "015760",
+    "trade_date": "2026-09-28",
+    "open_price": 30350,
+    "high_price": 30900,
+    "low_price": 30000,
+    "close_price": 30750,
+    "volume": 718935,
+    "trade_value_million_krw": 22014,
+    "previous_close_change": 500,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.11"
   }
 ]

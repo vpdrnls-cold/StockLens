@@ -1,4 +1,7 @@
-"""Intraday overlay on the frozen daily model -- dev segment only (item 46: I1-I4).
+"""Intraday overlay on the frozen daily model -- dev (I1-I4) and semi_holdout (I5).
+
+Default run: dev segment only (item 46: I1-I4, results in item 48).
+``--semi-holdout``: I5 (item 49), run ONCE after I4 picked a candidate.
 
 Everything below was fixed in CURRENT_STATUS item 46 BEFORE this script ran:
 
@@ -21,7 +24,16 @@ Timing (item 46, option A): features use day T's whole regular session (T is
 final at 20:00 KST); entry at T+1's open. Labels come from the daily dataset
 (adjusted prices), the same target the daily model and backtest use. Segments
 come from src.data.intraday_split, which purges labels that cross a block end.
-Only dev dates are read -- semi_holdout and forward stay locked.
+The default run reads only dev dates -- semi_holdout and forward stay locked.
+
+  I5  (``--semi-holdout``, needs STOCKLENS_CONFIRM_INTRADAY_SEMI_HOLDOUT=1)
+      Candidate fixed by item 48: w = 0.5. On semi_holdout (2026-07-01~09-23,
+      purged), compare only w = 0 vs w = 0.5. Pre-registered rule: the candidate
+      survives to the forward holdout if IC(w=0.5) - IC(w=0) > 0 (the dev sign
+      did not flip); otherwise the overlay is dropped. Magnitude is not judged --
+      about 11 non-overlapping 5-day periods cannot support it. This segment was
+      already seen by the 2026-09-24 diagnostic that chose the features, so a
+      pass is a weak check, not evidence.
 
 Daily model: the frozen model of scripts/run_ml_backtest.py (train 2002-2019,
 early stopping 2020-2023H1); 2025-09 onward is out-of-sample for it.
@@ -31,6 +43,9 @@ early stopping 2020-2023H1); 2025-09 onward is out-of-sample for it.
     # or reuse the panel saved by scripts/intraday_ic_diagnostic.py
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/experiment_intraday_overlay_dev.py \\
         --panel reports/intraday_ic/features_panel.csv
+    # I5, once (item 49)
+    STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_SEMI_HOLDOUT=1 PYTHONPATH=. \\
+        python scripts/experiment_intraday_overlay_dev.py --panel reports/intraday_ic/features_panel.csv --semi-holdout
 """
 
 from __future__ import annotations
@@ -52,6 +67,7 @@ from scripts.run_ml_backtest import (
 from src.backtest.baseline import calculate_performance
 from src.backtest.buffered import BufferedBaselineConfig, run_buffered_backtest_with_turnover
 from src.data.intraday_split import DEV_BLOCKS, select_segment
+from src.eval.test_lock import TestSetLockedError
 from src.ml.cross_section import daily_rank_ic, summarize_ic
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from scripts.walk_forward_backtest_compare import universe_average_gross
@@ -72,6 +88,8 @@ FEATURE_SIGNS = {
 MIN_FEATURES = 3
 WEIGHTS = (0.0, 0.25, 0.5)
 SEGMENTS = ["dev"] + [b.name for b in DEV_BLOCKS]
+# Fixed by the I4 result (CURRENT_STATUS item 48). Do not change after seeing I5.
+CANDIDATE_W = 0.5
 BETA_WINDOW = 60
 CALLER = "experiment_intraday_overlay_dev.py"
 
@@ -149,16 +167,16 @@ def build_scores(dataset: pd.DataFrame, panel: pd.DataFrame, trained) -> pd.Data
     return df
 
 
-def evaluate(df: pd.DataFrame) -> pd.DataFrame:
+def evaluate(df: pd.DataFrame, segments=SEGMENTS, weights=WEIGHTS) -> pd.DataFrame:
     rows = []
-    for seg in SEGMENTS:
+    for seg in segments:
         part = select_segment(df, seg, caller=CALLER, horizon=5)
         part = part.dropna(subset=["target_return_5d"]).copy()
         part["target_bn"] = beta_neutral_target(part)
         data_by_stock = _to_data_by_stock(part)
         # equal-weight universe, same decision grid, no costs: the long-only bar to beat
         univ_cum = float((1.0 + universe_average_gross(data_by_stock)).prod() - 1.0)
-        for w in WEIGHTS:
+        for w in weights:
             col = f"score_w{w}"
             ic = summarize_ic(daily_rank_ic(part, col, "target_return_5d"))
             ic_bn = summarize_ic(daily_rank_ic(part.dropna(subset=["target_bn"]), col, "target_bn"))
@@ -198,6 +216,8 @@ def main() -> None:
     ap.add_argument("--panel", default=None, help="saved features_panel.csv (default: rebuild from raw)")
     ap.add_argument("--minute-dir", default="data/raw/kiwoom/ka10080")
     ap.add_argument("--out", default="reports/intraday_overlay")
+    ap.add_argument("--semi-holdout", action="store_true",
+                    help="I5: evaluate w=0 vs the fixed candidate on semi_holdout (locked; run once)")
     args = ap.parse_args()
 
     dataset = add_beta(_load_priced_dataset())
@@ -211,22 +231,16 @@ def main() -> None:
           f"{panel['trade_date'].min():%Y-%m-%d} ~ {panel['trade_date'].max():%Y-%m-%d}")
 
     df = build_scores(dataset, panel, trained)
-    res = evaluate(df)
-
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    res.to_csv(out / "dev_results.csv", index=False, encoding="utf-8-sig")
 
-    print("\n" + "=" * 110)
-    print(f"DEV SEGMENT RESULTS   (score = z(daily) + w*z(intraday); top_n={TOP_N}, buffer=3.0, real costs)")
-    print("=" * 110)
-    print(f"{'segment':<8}{'w':>6}{'period':>25}{'days':>6}{'cov':>7}{'IC':>9}{'IC>0':>7}"
-          f"{'IC_bn':>9}{'gross':>9}{'net':>9}{'mdd':>8}{'univEW':>8}{'entries':>8}")
-    for r in res.itertuples():
-        print(f"{r.segment:<8}{r.w:>6.2f}{f'{r.start:%Y-%m-%d}~{r.end:%Y-%m-%d}':>25}{r.days:>6}"
-              f"{r.intraday_cov:>7.1%}{r.ic:>+9.4f}{r.ic_pos:>7.1%}{r.ic_bn:>+9.4f}"
-              f"{r.buf_gross_cum:>9.1%}{r.buf_net_cum:>9.1%}{r.buf_mdd:>8.1%}{r.univ_ew_cum:>8.1%}{r.entries:>8.2f}")
-    print("gross/net/mdd: buffered top-10 backtest (info only). univEW: equal-weight universe, no costs.")
+    if args.semi_holdout:
+        run_semi_holdout(df, out)
+        return
+
+    res = evaluate(df)
+    res.to_csv(out / "dev_results.csv", index=False, encoding="utf-8-sig")
+    print_results("DEV SEGMENT RESULTS", res)
 
     chosen, wide = decide(res)
     print("\n" + "=" * 110)
@@ -243,6 +257,43 @@ def main() -> None:
         print(f"=> CANDIDATE w={chosen}. Next: I5 (semi_holdout sign check, once).")
     print(f"\nsaved: {out / 'dev_results.csv'}")
 
+
+def print_results(title: str, res: pd.DataFrame) -> None:
+    print("\n" + "=" * 110)
+    print(f"{title}   (score = z(daily) + w*z(intraday); top_n={TOP_N}, buffer=3.0, real costs)")
+    print("=" * 110)
+    print(f"{'segment':<13}{'w':>5}{'period':>23}{'days':>6}{'cov':>7}{'IC':>9}{'IC>0':>7}"
+          f"{'IC_bn':>9}{'gross':>9}{'net':>9}{'mdd':>8}{'univEW':>8}{'entries':>8}")
+    for r in res.itertuples():
+        print(f"{r.segment:<13}{r.w:>5.2f}{f'{r.start:%Y-%m-%d}~{r.end:%Y-%m-%d}':>23}{r.days:>6}"
+              f"{r.intraday_cov:>7.1%}{r.ic:>+9.4f}{r.ic_pos:>7.1%}{r.ic_bn:>+9.4f}"
+              f"{r.buf_gross_cum:>9.1%}{r.buf_net_cum:>9.1%}{r.buf_mdd:>8.1%}{r.univ_ew_cum:>8.1%}{r.entries:>8.2f}")
+    print("gross/net/mdd: buffered top-10 backtest (info only). univEW: equal-weight universe, no costs.")
+
+
+def i5_verdict(res: pd.DataFrame) -> tuple[float, bool]:
+    ic = res.set_index("w")["ic"]
+    diff = float(ic[CANDIDATE_W] - ic[0.0])
+    return diff, diff > 0
+
+
+def run_semi_holdout(df: pd.DataFrame, out: Path) -> None:
+    try:
+        res = evaluate(df, segments=["semi_holdout"], weights=(0.0, CANDIDATE_W))
+    except TestSetLockedError as locked:
+        print(f"semi_holdout not evaluated: {locked}")
+        return
+    res.to_csv(out / "semi_holdout_results.csv", index=False, encoding="utf-8-sig")
+    print_results("SEMI-HOLDOUT (I5, once)", res)
+
+    diff, survives = i5_verdict(res)
+    print("\n" + "=" * 110)
+    print(f"PRE-REGISTERED DECISION (I5): IC(w={CANDIDATE_W}) - IC(w=0) must stay > 0")
+    print("=" * 110)
+    print(f"IC diff = {diff:+.4f}  ->  "
+          + ("NOT FLIPPED: keep w=0.5 as the overlay candidate for the forward holdout (I6)."
+             if survives else "FLIPPED: drop the intraday overlay; forward compares daily alone only."))
+    print(f"\nsaved: {out / 'semi_holdout_results.csv'}")
 
 if __name__ == "__main__":
     main()

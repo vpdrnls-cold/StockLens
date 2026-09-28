@@ -86396,5 +86396,18 @@
     "previous_close_change": -2800,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.26"
+  },
+  {
+    "stock_code": "033780",
+    "trade_date": "2026-09-28",
+    "open_price": 174300,
+    "high_price": 176800,
+    "low_price": 173700,
+    "close_price": 175300,
+    "volume": 96800,
+    "trade_value_million_krw": 17019,
+    "previous_close_change": 1000,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.09"
   }
 ]

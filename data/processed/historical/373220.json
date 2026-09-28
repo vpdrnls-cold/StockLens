@@ -14792,5 +14792,18 @@
     "previous_close_change": 1500,
     "previous_close_change_sign": 2,
     "turnover_rate": "0.10"
+  },
+  {
+    "stock_code": "373220",
+    "trade_date": "2026-09-28",
+    "open_price": 352000,
+    "high_price": 368000,
+    "low_price": 350500,
+    "close_price": 360000,
+    "volume": 198479,
+    "trade_value_million_krw": 71853,
+    "previous_close_change": 8500,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.08"
   }
 ]

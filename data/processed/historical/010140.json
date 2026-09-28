@@ -107651,5 +107651,18 @@
     "previous_close_change": -150,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.26"
+  },
+  {
+    "stock_code": "010140",
+    "trade_date": "2026-09-28",
+    "open_price": 20400,
+    "high_price": 20550,
+    "low_price": 20100,
+    "close_price": 20150,
+    "volume": 911070,
+    "trade_value_million_krw": 18486,
+    "previous_close_change": -100,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.10"
   }
 ]

@@ -79844,5 +79844,18 @@
     "previous_close_change": -3600,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.62"
+  },
+  {
+    "stock_code": "003670",
+    "trade_date": "2026-09-28",
+    "open_price": 180000,
+    "high_price": 185400,
+    "low_price": 179200,
+    "close_price": 182000,
+    "volume": 232980,
+    "trade_value_million_krw": 42459,
+    "previous_close_change": 2100,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.26"
   }
 ]

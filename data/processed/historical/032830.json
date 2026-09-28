@@ -52375,5 +52375,18 @@
     "previous_close_change": 4000,
     "previous_close_change_sign": 2,
     "turnover_rate": "0.11"
+  },
+  {
+    "stock_code": "032830",
+    "trade_date": "2026-09-28",
+    "open_price": 296000,
+    "high_price": 302000,
+    "low_price": 289000,
+    "close_price": 293000,
+    "volume": 183753,
+    "trade_value_million_krw": 54197,
+    "previous_close_change": -1500,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.09"
   }
 ]

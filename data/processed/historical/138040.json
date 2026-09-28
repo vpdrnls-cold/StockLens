@@ -49125,5 +49125,18 @@
     "previous_close_change": -3400,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.09"
+  },
+  {
+    "stock_code": "138040",
+    "trade_date": "2026-09-28",
+    "open_price": 126700,
+    "high_price": 133200,
+    "low_price": 125600,
+    "close_price": 132600,
+    "volume": 118019,
+    "trade_value_million_krw": 15321,
+    "previous_close_change": 7000,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.07"
   }
 ]

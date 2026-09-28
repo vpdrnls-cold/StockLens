@@ -80,9 +80,12 @@ class IntradaySplitError(RuntimeError):
     """Raised when a segment cannot be served safely (e.g. forward holdout too short)."""
 
 
-def _label_end_dates(dates: pd.Series, horizon: int) -> pd.Series:
-    """Map each decision date to the date h trading days later (NaT if beyond the data)."""
-    calendar = pd.Series(sorted(pd.to_datetime(dates).dropna().unique()))
+def _label_end_dates(dates: pd.Series, horizon: int, calendar=None) -> pd.Series:
+    """Map each decision date to the date h trading days later (NaT if beyond the calendar)."""
+    days = pd.to_datetime(dates).dropna()
+    if calendar is not None:
+        days = pd.concat([days, pd.Series(pd.to_datetime(list(calendar)))])
+    calendar = pd.Series(sorted(days.unique()))
     ahead = calendar.shift(-horizon)
     lookup = dict(zip(calendar, ahead))
     return pd.to_datetime(dates).map(lookup)
@@ -95,12 +98,18 @@ def select_segment(
     caller: str,
     horizon: int = 5,
     date_col: str = "trade_date",
+    calendar=None,
 ) -> pd.DataFrame:
     """Rows of ``df`` whose decision date is in ``segment``, label-purged at its end.
 
-    ``df`` must cover the whole trading calendar around the segment (the purge
-    uses the dates present in ``df`` as the calendar). Locked segments raise
-    unless their environment variable is set to 1 for this run.
+    Without ``calendar`` the purge uses the dates present in ``df`` as the
+    trading calendar. A dataset built by ``build_combined_dataset`` has no rows
+    for the last ``horizon`` bar dates (their targets are undefined), so the
+    decision dates just before the data end then look like their label window
+    runs past the calendar and are dropped too -- conservative, never leaky, but
+    it discards up to ``horizon`` valid dates (item 49). Pass the full bar-date
+    calendar (e.g. every trade_date in the price files) to purge exactly.
+    Locked segments raise unless their environment variable is set to 1.
     """
     if segment not in SEGMENTS:
         raise ValueError(f"unknown segment {segment!r}; choose from {sorted(SEGMENTS)}")
@@ -120,8 +129,11 @@ def select_segment(
     if seg.end is not None:
         in_seg &= dates <= pd.Timestamp(seg.end)
 
-    label_end = _label_end_dates(dates, horizon)
-    purge_limit = pd.Timestamp(seg.end) if seg.end is not None else dates.max()
+    label_end = _label_end_dates(dates, horizon, calendar)
+    if seg.end is not None:
+        purge_limit = pd.Timestamp(seg.end)
+    else:  # open-ended: the label must end within the known calendar
+        purge_limit = label_end.max() if label_end.notna().any() else dates.max()
     keep = in_seg & label_end.notna() & (label_end <= purge_limit)
     out = df.loc[keep].copy()
 
