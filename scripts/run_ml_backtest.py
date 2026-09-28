@@ -1,30 +1,44 @@
-"""Phase G final evaluation: ML strategy vs. rule-based baseline.
+"""Daily ML strategy through the buffered engine -- validation check + forward holdout.
 
-This is the first script in the project that touches
-``data/processed`` test-period data through the *backtest* engine.
-Per AGENTS.md section 13 ("Never use the final test period to
-repeatedly make design decisions"), this script is meant to be run
-ONCE the feature set (Phase F) and model (Phase G hyperparameters) are
-already frozen -- not as a loop for tuning. If you change the model
-after looking at this script's output, you are no longer doing an
-out-of-sample evaluation.
+CURRENT_STATUS item 47 (pre-registered item 46, D1).
 
-Both strategies below run through the exact same execution engine
-(src.backtest.baseline.run_baseline_backtest): T+1 open entry,
-T+holding_days close exit, identical fees/tax/slippage. Only the
-stock-picking rule (score_fn) differs, so the comparison is
-apples-to-apples.
+What changed vs the Phase G version (item 41)
+  - Engine: ``run_buffered_backtest`` with top_n=10 and buffer_multiplier=3.0
+    (item 35 grid, re-confirmed under the next_open target in item 45: net
+    positive in all 3 walk-forward windows). Both values are FIXED by
+    pre-registration -- there is deliberately no environment override.
+  - Final evaluation period: the daily test split (2023-07-01~2026-09-16) was
+    consumed by item 41 and is no longer read here at all. The only clean
+    holdout is the FORWARD period (2026-09-24~, collected nightly by
+    scripts/nightly_ingest.sh), shared with the intraday track (item 46). It is
+    locked by ``src.data.intraday_split`` until at least 60 decision dates exist
+    AND STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 is set for that one run.
 
-The ML model is trained on the per-date RANK of target_return_5d (not
-the raw value) with early stopping on cross-sectional rank IC (not
-RMSE) -- see the comment above the train_model() call for why
-(CURRENT_STATUS.md item 38, the pre-Phase-H checklist's target/early-
-stopping adoption decision).
+What runs without any flag (safe to rerun)
+  1. Train the frozen daily model: train 2002-10-29~2019-12-31, early stopping
+     on validation 2020-01-01~2023-06-30; per-date rank target, IC-based early
+     stopping, deterministic params (items 36/38).
+  2. Validation-period backtest of three strategies through the same costs:
+         ml_buffered   ML score, top 10, buffer 3.0     <- the strategy to deploy
+         ml_plain      ML score, top 10, full turnover  (reference)
+         momentum      past 5-day return, top 10, full turnover (legacy baseline)
+     This model is exactly the W3 model of the walk-forward scripts (same train
+     end and validation window), so ml_buffered / ml_plain must reproduce item 45
+     (A_all19, W3): buffered net_cum +65.0% / MDD -43.7%, plain net_cum -2.2%.
+     A mismatch means the production path differs from the experiment path.
+  3. Stop at the forward lock.
+
+    STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/run_ml_backtest.py
+
+Forward evaluation (ONCE, after >= 60 forward decision dates; not before ~late Dec 2026)
+
+    STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 PYTHONPATH=. python scripts/run_ml_backtest.py
+
+The Phase G version (momentum vs ML on the test split, top_n=2) is in git
+history before this change (item 41) if it ever needs to be reproduced.
 """
 
 from __future__ import annotations
-
-import os
 
 import numpy as np
 import pandas as pd
@@ -34,33 +48,30 @@ from src.backtest.baseline import (
     calculate_performance,
     calculate_score,
     run_baseline_backtest,
-    trades_to_dataframe,
 )
+from src.backtest.buffered import BufferedBaselineConfig, run_buffered_backtest_with_turnover
 from src.data.dataset import build_combined_dataset, split_by_time
+from src.data.intraday_split import IntradaySplitError, select_segment
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
-from src.features.engineering import FEATURE_COLUMNS, SELECTED_FEATURES
-from src.eval.test_lock import confirm_final_test_use
-from src.ml.cross_section import daily_rank_ic, rank_by_date
+from src.eval.test_lock import TestSetLockedError
+from src.features.engineering import FEATURE_COLUMNS
+from src.ml.cross_section import daily_rank_ic, rank_by_date, summarize_ic
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
-from src.models.predict import train_model
+from src.models.predict import TrainedModel, train_model
 from src.reporting.run_log import RunRecorder
 
-# core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe
-# (see src/data/universe.py).
+# core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe.
 STOCK_CODES = get_universe()
 
-# This script's whole purpose is to produce the ML-vs-baseline numbers
-# that decide whether Phase H is warranted -- those numbers must not
-# depend on which machine ran them. n_jobs=-1 + the default tree_method
-# is NOT reproducible across machines/thread counts for this reason
-# (AGENTS.md section 25, CURRENT_STATUS.md items 15/23-25). This was
-# never pinned here before (the script pre-dates that discovery and had
-# not been run end to end on top50 until item 38), unlike every
-# walk-forward diagnostic script since item 23.
+# Cross-machine reproducibility (AGENTS.md section 25, items 15/23-25).
 DETERMINISTIC_PARAMS = {"n_jobs": 1, "tree_method": "exact"}
 
-CONFIG = BaselineConfig(
+# Pre-registered in item 46 (D1). Not overridable on purpose.
+TOP_N = 10
+BUFFER_MULTIPLIER = 3.0
+
+COST_KWARGS = dict(
     lookback_days=5,
     holding_days=5,
     buy_fee=0.00015,
@@ -68,100 +79,52 @@ CONFIG = BaselineConfig(
     sell_tax=0.0020,
     buy_slippage=0.0010,
     sell_slippage=0.0010,
-    # Stocks listed at different times (top50) need the partial-universe engine;
-    # core5 keeps the original behavior so recorded results stay reproducible.
     allow_partial_universe=len(STOCK_CODES) != 5,
 )
+PLAIN_CONFIG = BaselineConfig(**COST_KWARGS)
+BUFFERED_CONFIG = BufferedBaselineConfig(**COST_KWARGS, buffer_multiplier=BUFFER_MULTIPLIER)
 
-# All-in on the single top pick (top_n=1) concentrates 100% of capital
-# in one prediction/momentum score being right. TOP_N>1 equal-weights
-# the top N picks each period instead, trading away some upside for
-# materially less single-stock blowup risk. Both the momentum baseline
-# and the ML strategy use the same TOP_N so the comparison stays
-# apples-to-apples.
-# With 50 stocks, 2 picks is very concentrated: try STOCKLENS_TOP_N=5 or 10.
-TOP_N = int(os.environ.get("STOCKLENS_TOP_N", "2"))
+# Item 45, A_all19, W3 (same model as this script's validation run).
+EXPECTED_VALIDATION = {"ml_buffered": 0.650, "ml_plain": -0.022}
 
 
 def _load_priced_dataset() -> pd.DataFrame:
     storage = HistoricalStorage("data")
-
-    stock_bars = {
-        stock_code: storage.load_daily_bars(stock_code)
-        for stock_code in STOCK_CODES
-    }
+    stock_bars = {code: storage.load_daily_bars(code) for code in STOCK_CODES}
 
     dataset = build_combined_dataset(stock_bars)
     dataset["trade_date"] = pd.to_datetime(dataset["trade_date"])
-    # A handful of top50 stocks produce +-inf feature values (e.g. a
-    # near-zero moving average denominator) that core5 never hit -- this
-    # script pre-dates the top50 universe (item 28) and was never
-    # actually run against it end to end until now. Every top50
-    # walk-forward diagnostic script (items 30+) already does this same
-    # replacement; XGBoost otherwise hard-errors on inf input.
+    # Some top50 stocks produce +-inf features (near-zero denominators);
+    # XGBoost hard-errors on inf (item 38).
     dataset[list(FEATURE_COLUMNS)] = dataset[list(FEATURE_COLUMNS)].replace(
         [np.inf, -np.inf], np.nan
     )
-
-    prices = [
-        {
-            "trade_date": pd.Timestamp(bar.trade_date),
-            "stock_code": stock_code,
-            "open_price": float(bar.open_price),
-            "close_price": float(bar.close_price),
-        }
-        for stock_code, bars in stock_bars.items()
-        for bar in bars
-    ]
-
-    return dataset.merge(
-        pd.DataFrame(prices),
-        on=["trade_date", "stock_code"],
-        how="left",
-        validate="one_to_one",
+    prices = pd.DataFrame(
+        [
+            {
+                "trade_date": pd.Timestamp(bar.trade_date),
+                "stock_code": code,
+                "open_price": float(bar.open_price),
+                "close_price": float(bar.close_price),
+            }
+            for code, bars in stock_bars.items()
+            for bar in bars
+        ]
     )
+    return dataset.merge(prices, on=["trade_date", "stock_code"], how="left", validate="one_to_one")
 
 
 def _to_data_by_stock(dataset: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return {
-        str(stock_code): (
-            group[["stock_code", "trade_date", "open_price", "close_price"]]
-            .sort_values("trade_date")
-            .reset_index(drop=True)
-        )
-        for stock_code, group in dataset.groupby("stock_code")
+        str(code): group[["stock_code", "trade_date", "open_price", "close_price"]]
+        .sort_values("trade_date")
+        .reset_index(drop=True)
+        for code, group in dataset.groupby("stock_code")
     }
 
 
-def _print_performance(label: str, trades: list, initial_capital: float = 10_000_000.0) -> None:
-    perf = calculate_performance(trades, initial_capital=initial_capital)
-
-    print(f"--- {label} ---")
-    print(f"Rebalance periods:  {int(perf['period_count'])}")
-    print(f"Positions opened:   {int(perf['trade_count'])}")
-    print(f"Cumulative Return:  {perf['total_return']:.4%}")
-    print(f"Average Return:     {perf['average_trade_return']:.4%}")
-    print(f"Hit Rate:           {perf['win_rate']:.4%}")
-    print(f"Maximum Drawdown:   {perf['max_drawdown']:.4%}")
-    print()
-
-
-def main() -> None:
-    dataset = _load_priced_dataset()
+def train_frozen_model(dataset: pd.DataFrame) -> tuple[TrainedModel, object]:
     splits = split_by_time(dataset)
-
-    # Target: per-date rank of target_return_5d, not the raw value.
-    # Early stopping: cross-sectional rank IC, not RMSE.
-    # Adopted as the production default per CURRENT_STATUS.md item 38
-    # (pre-Phase-H checklist item 5), on the combined evidence of items
-    # 32/36/37: the rank target is more stable across all 3 walk-forward
-    # windows than the raw target, IC-based early stopping rescues the
-    # cases where RMSE-based stopping collapses to a near-untrained model
-    # without hurting the cases that were already fine, and a classification
-    # reframing (item 38) was strictly worse or equal in every window --
-    # so this combination, not raw+rmse, is what Phase G's actual
-    # ML-vs-baseline comparison (below) should use.
-    print("=== Training daily model (train -> validation early stopping) ===")
     trained = train_model(
         splits.train,
         rank_by_date(splits.train, "target_return_5d"),
@@ -170,69 +133,108 @@ def main() -> None:
         params=DETERMINISTIC_PARAMS,
         early_stopping_metric="ic",
     )
+    return trained, splits
+
+
+def evaluate_period(period: pd.DataFrame, trained: TrainedModel) -> tuple[pd.DataFrame, dict, float]:
+    """Run the three strategies on one period. Returns (summary table, trades, mean IC)."""
+    data_by_stock = _to_data_by_stock(period)
+    predictions = predictions_for_dataset(trained, period)
+    ml_score_fn = make_model_score_fn(predictions)
+
+    ml_buffered, turnover = run_buffered_backtest_with_turnover(
+        data_by_stock, BUFFERED_CONFIG, score_fn=ml_score_fn, top_n=TOP_N
+    )
+    trades = {
+        "ml_buffered": ml_buffered,
+        "ml_plain": run_baseline_backtest(data_by_stock, PLAIN_CONFIG, score_fn=ml_score_fn, top_n=TOP_N),
+        "momentum": run_baseline_backtest(data_by_stock, PLAIN_CONFIG, score_fn=calculate_score, top_n=TOP_N),
+    }
+
+    rows = []
+    for name, t in trades.items():
+        perf = calculate_performance(t)
+        rows.append({
+            "strategy": name,
+            "periods": int(perf["period_count"]),
+            "net_cum": perf["total_return"],
+            "avg_period": perf["average_trade_return"],
+            "hit_rate": perf["win_rate"],
+            "mdd": perf["max_drawdown"],
+            "entries_per_period": turnover["entries_per_period"] if name == "ml_buffered" else float(TOP_N),
+        })
+
+    scored = period[["trade_date", "stock_code", "target_return_5d"]].merge(
+        predictions, on=["trade_date", "stock_code"], how="left"
+    ).dropna(subset=["target_return_5d"])
+    ic = daily_rank_ic(scored, "predicted_return")
+    return pd.DataFrame(rows), trades, ic
+
+
+def _print_table(title: str, table: pd.DataFrame, ic: pd.Series) -> None:
+    print("=" * 96)
+    print(f"{title}   (top_n={TOP_N}, buffer={BUFFER_MULTIPLIER}, real costs)")
+    print("=" * 96)
+    print(f"{'strategy':<13}{'periods':>8}{'net_cum':>10}{'avg/5d':>9}{'hit':>8}{'mdd':>9}{'entries/period':>16}")
+    for r in table.itertuples():
+        print(
+            f"{r.strategy:<13}{r.periods:>8}{r.net_cum:>10.1%}{r.avg_period:>9.3%}"
+            f"{r.hit_rate:>8.1%}{r.mdd:>9.1%}{r.entries_per_period:>16.2f}"
+        )
+    s = summarize_ic(ic)
+    print(f"ML daily rank IC: mean {s.mean_ic:+.4f}, IC>0 {s.pct_pos:.1%}, days {s.n_days}")
+
+
+def main() -> None:
+    dataset = _load_priced_dataset()
+
+    print("=== Training frozen daily model (train -> validation early stopping) ===")
+    trained, splits = train_frozen_model(dataset)
     print(f"Best iteration: {trained.best_iteration}")
-    print(f"Features: {list(trained.feature_columns)}")
     print()
 
-    confirm_final_test_use("run_ml_backtest.py")
-
-    print("=== Running FINAL evaluation on the untouched test period ===")
+    # --- 1. validation check (no flag needed) ---------------------------------
+    table, _, ic = evaluate_period(splits.validation, trained)
+    _print_table(
+        f"VALIDATION {splits.validation['trade_date'].min():%Y-%m-%d} ~ "
+        f"{splits.validation['trade_date'].max():%Y-%m-%d}",
+        table, ic,
+    )
+    got = table.set_index("strategy")["net_cum"]
+    ok = all(abs(got[k] - v) < 0.0015 for k, v in EXPECTED_VALIDATION.items())
     print(
-        f"Test period: {splits.test['trade_date'].min()} ~ "
-        f"{splits.test['trade_date'].max()}"
+        f"\nCross-check vs item 45 (A_all19, W3): ml_buffered {got['ml_buffered']:+.1%} "
+        f"(expected +65.0%), ml_plain {got['ml_plain']:+.1%} (expected -2.2%) -> "
+        f"{'MATCH' if ok else 'MISMATCH -- production path differs from experiment path'}"
     )
     print()
 
-    data_by_stock = _to_data_by_stock(splits.test)
-
-    print(f"=== Diversification: top_n={TOP_N} (equal-weight) ===")
-    print()
-
-    # Rule-based momentum baseline (calculate_score is the default
-    # score_fn; passed explicitly here just for clarity).
-    baseline_trades = run_baseline_backtest(
-        data_by_stock, config=CONFIG, score_fn=calculate_score, top_n=TOP_N
+    # --- 2. forward holdout (locked) -------------------------------------------
+    try:
+        forward = select_segment(dataset, "forward", caller="run_ml_backtest.py", horizon=5)
+    except (TestSetLockedError, IntradaySplitError) as locked:
+        print(f"Forward holdout not evaluated: {locked}")
+        return
+    table, trades, ic = evaluate_period(forward, trained)
+    _print_table(
+        f"FORWARD HOLDOUT {forward['trade_date'].min():%Y-%m-%d} ~ {forward['trade_date'].max():%Y-%m-%d}",
+        table, ic,
     )
-
-    # ML-scored strategy: same engine, predictions instead of momentum.
-    # Note: since the model is trained on the rank target now, these are
-    # rank-scale scores (roughly in (-0.5, 0.5)), not return magnitudes --
-    # score_fn only needs relative ordering to pick top_n, so this is
-    # fine, but the "predicted_return" column name is a slight misnomer
-    # inherited from src.ml.strategy's original raw-target design.
-    predictions = predictions_for_dataset(trained, splits.test)
-    model_score_fn = make_model_score_fn(predictions)
-    model_trades = run_baseline_backtest(
-        data_by_stock, config=CONFIG, score_fn=model_score_fn, top_n=TOP_N
-    )
-
-    _print_performance("Rule-based momentum baseline", baseline_trades)
-    _print_performance("ML-scored strategy (XGBoost)", model_trades)
-
-    print("=== ML strategy trades ===")
-    print(trades_to_dataframe(model_trades).to_string(index=False))
-
-    # Keep the time series of this (already confirmed) test run so it can be
-    # plotted later with scripts/plot_run.py WITHOUT re-running this script --
-    # re-running it is a new test access; re-plotting a saved run is not.
-    scored = splits.test[["trade_date", "stock_code", "target_return_5d"]].copy()
-    scored["trade_date"] = pd.to_datetime(scored["trade_date"])
-    scored = scored.merge(predictions, on=["trade_date", "stock_code"], how="left")
-    scored = scored.dropna(subset=["target_return_5d"])
 
     recorder = RunRecorder(
-        "run_ml_backtest_test",
+        "run_ml_backtest_forward",
         meta={
             "script": "scripts/run_ml_backtest.py",
-            "split": "TEST (confirmed via STOCKLENS_CONFIRM_FINAL_TEST)",
+            "split": "FORWARD holdout (confirmed via STOCKLENS_CONFIRM_INTRADAY_FORWARD)",
             "universe_size": len(STOCK_CODES),
             "top_n": TOP_N,
+            "buffer_multiplier": BUFFER_MULTIPLIER,
             "best_iteration": trained.best_iteration,
         },
     )
-    recorder.add_trades("test", "momentum", baseline_trades)
-    recorder.add_trades("test", "ml", model_trades)
-    recorder.add_ic("test", "ml", daily_rank_ic(scored, "predicted_return"))
+    for name, t in trades.items():
+        recorder.add_trades("forward", name, t)
+    recorder.add_ic("forward", "ml", ic)
     recorder.save()
 
 

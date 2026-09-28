@@ -64,3 +64,18 @@ def confirm_final_test_use(caller: str) -> None:
         f"final test period. Make sure every validation-only "
         f"experiment for this decision is actually done first."
     )
+
+
+def confirm_holdout_use(caller: str, *, env_var: str, what: str) -> None:
+    """Same one-shot opt-in as ``confirm_final_test_use``, for other holdouts.
+
+    Used by ``src/data/intraday_split.py`` (CURRENT_STATUS item 46) so each
+    locked period has its own switch: unlocking one never unlocks another.
+    """
+    if os.environ.get(env_var) != "1":
+        raise TestSetLockedError(
+            f"{caller} tried to read {what} without confirmation. Finish the "
+            f"pre-registered dev-only experiments first, then rerun once with "
+            f"{env_var}=1 in the environment."
+        )
+    print(f"[{caller}] {env_var}=1 is set -- proceeding to read {what}.")

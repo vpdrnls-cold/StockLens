@@ -28,7 +28,10 @@ htmlcov/
 # Generated data
 *.log
 
-# Kiwoom raw API dumps (regenerable; ~3MB per stock per run, adds up at 50 stocks)
+# Kiwoom raw API dumps (~3MB per stock per run, adds up at 50 stocks).
+# ka10081 (daily) is regenerable, but ka10080 (minute) is NOT: the API only
+# serves about the last year, so older minute bars exist only in this local
+# copy -- back it up (scripts/nightly_ingest.sh, STOCKLENS_RAW_BACKUP_DIR).
 data/raw/
 # Derived datasets (regenerable with scripts/build_ml_dataset.py)
 data/processed/*.csv

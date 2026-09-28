@@ -73,9 +73,10 @@ def test_build_stock_dataset_removes_warmup_and_future_target_rows() -> None:
 
 
 def test_five_day_target_is_calculated_correctly() -> None:
+    # Legacy close-to-close target; the default is now next_open (item 44).
     bars = _make_bars(count=80)
 
-    dataset = build_stock_dataset(bars)
+    dataset = build_stock_dataset(bars, entry="close")
 
     first_row = dataset.iloc[0]
 
@@ -132,6 +133,7 @@ def test_custom_target_horizon_changes_target() -> None:
     dataset = build_stock_dataset(
         bars,
         target_horizon=10,
+        entry="close",
     )
 
     first_row = dataset.iloc[0]
@@ -155,6 +157,20 @@ def test_custom_target_horizon_changes_target() -> None:
     expected_target = future_close / current_close - 1.0
 
     assert first_row[TARGET_COLUMN] == pytest.approx(expected_target)
+
+def test_default_target_enters_at_next_open() -> None:
+    """Default target (item 44): close(t+5) / open(t+1) - 1, what the engine realizes."""
+    bars = _make_bars(count=80)
+    by_date = {bar.trade_date: bar for bar in bars}
+
+    dataset = build_stock_dataset(bars)
+
+    first_row = dataset.iloc[0]
+    next_open = float(by_date[dataset.iloc[1]["trade_date"]].open_price)
+    future_close = float(by_date[dataset.iloc[5]["trade_date"]].close_price)
+
+    assert first_row[TARGET_COLUMN] == pytest.approx(future_close / next_open - 1.0)
+
 
 def test_build_combined_dataset_concatenates_multiple_stocks() -> None:
     stock_bars = {

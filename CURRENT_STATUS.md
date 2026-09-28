@@ -564,3 +564,95 @@ MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신�
 - **연결**: `scripts/walk_forward_backtest_compare.py`(validation 전용)는 매 실행마다 전략·top_n·구간별 순수익 trades와 ml/reversal의 daily rank IC를 저장. `scripts/run_ml_backtest.py`는 test 잠금을 통과한 경우에만 끝에서 결과를 저장 — 이후 그래프는 저장본으로 다시 그리면 되므로 그래프를 위해 test 스크립트를 재실행할 일이 없도록 함(재실행은 새로운 test 접근). 과거 항목 41의 test 결과는 저장본이 없고, 그래프를 위해 재실행하지 않음.
 - **검증**: top50으로 `walk_forward_backtest_compare.py`를 재실행해 저장본의 `summary.csv` 누적수익이 터미널 표의 `net_cum`과 일치함을 확인(예: W3 ml top_n=5 +8.3%). `tests/test_reporting.py` 5개 추가. `reports/runs/`는 재생성 가능한 산출물이라 `.gitignore`에 추가, `requirements.txt`에 `matplotlib` 추가.
 - **참고**: 이 스크립트의 ML은 항목 33 시점 설정(rank 타깃, RMSE 기준 early stopping)이라 항목 36·38에서 채택한 IC 기준 early stopping과는 다름 — 그래프는 항목 33 결과의 시각화로 읽어야 함.
+
+44. **타깃 진입 시점 변경(`entry="next_open"`)이 walk-forward ML 수치를 바꾼 것 확인 — leakage 아님, 항목 33~41의 ML 수치는 이전 타깃(`close`) 기준으로 읽어야 함**
+
+- **발견 경위**: 2026-09-26 top50 `walk_forward_backtest_compare.py` 재실행에서 모멘텀/반전 수치는 항목 33과 소수점까지 동일한데 ML만 달라짐(best_iteration W1/W2/W3 294/45/8 → 118/53/9, ML top5 평균 t(excess) 1.34 → 1.67, net -0.128% → -0.060%/5일). `compare_early_stopping_metric.py` 재실행 결과도 항목 36 표와 전부 다름.
+- **원인**: 커밋 `b1614a4`(2026-09-26)의 `src/data/dataset.py` 변경 — 타깃 기본값이 `close(t+5)/close(t)-1`에서 `close(t+5)/open(t+1)-1`(`DEFAULT_ENTRY_MODE="next_open"`, 2026-09-24 결정, Notion "Entry timing IC on top-50 universe")로 바뀜. 백테스트 엔진은 원래부터 T+1 시가 진입이었으므로 새 타깃이 엔진이 실제로 실현하는 수익과 정확히 일치함(더 올바른 정의). 모멘텀/반전은 타깃을 쓰지 않으므로 불변, ML만 바뀐 것과 정확히 들어맞음. xgboost 버전(3.4.1)·`tree_method="exact"`·학습 코드 변경 없음 — 같은 스크립트를 xgboost 3.2.0(Linux)에서 돌려도 재훈 기기와 동일 수치(W1 rank+ic best_iteration 103, val_ic 0.0665)가 나와 환경 요인도 배제됨.
+- **새 타깃 기준 수치(`compare_early_stopping_metric.py`, validation)**: rank 타깃 val_ic W1 0.0663(rmse)/0.0665(ic), W2 0.0457/0.0458, W3 0.0218/0.0218 — 이전 타깃 대비 3구간 모두 상승(W3 0.0154 → 0.0218). raw 타깃 W2 rmse 붕괴(항목 36의 best_iteration=0)는 더 이상 재현되지 않음(175, 0.0379) → 새 타깃에서는 rmse/ic 조기종료 차이가 거의 사라짐. rank 타깃 우위는 유지되므로 항목 38의 채택(rank + ic)은 그대로 둠.
+- **영향**: (1) 항목 33~41의 ML 수치와 항목 41의 test 결과(best_iteration 4)는 `close` 타깃 기준. 현재 코드로 `run_ml_backtest.py`를 돌리면 다른 모델이 나옴 — 그렇다고 test를 다시 보지 않음(항목 41 원칙). 재현이 필요하면 `entry="close"`. (2) `walk_forward_backtest_compare.py`의 저장본(`reports/runs/20260926-123548_*`)이 새 타깃 기준선.
+- **주의(Phase H 데이터 기간)**: `ka10080`은 약 1년치(2025-09-01~)만 제공 → 분봉 데이터 전체가 daily test 구간(2023-07~2026-09) 안에 있음. 분봉 IC 진단(Notion "Intraday summary features IC diagnostic")은 이미 이 구간을 사용함. 분봉 feature를 모델에 넣는 결정은 이 1년 안에서 별도 개발/홀드아웃을 나누거나, 앞으로 매일 쌓이는 신규 데이터를 forward 홀드아웃으로 삼아야 함(미결정).
+
+45. **일봉 분해 5일 feature(gap_sum_5, intraday_sum_5, range_mean_5) 추가 실험 — 사전등록 기준 미달, 19개 유지**
+
+- **목적**: Notion Phase H 계획 2번. next_open 타깃에서 train/validation 모두 신호가 보였던 3개 feature(특히 gap_sum_5: 베타중립 IC train -0.034 t -7.3, validation -0.041 t -3.9)를 모델에 넣으면 좋아지는가.
+- **방법**(`scripts/experiment_decomposition_features.py`, top50, 3개 walk-forward 구간, validation만): A = ALL_19, B = ALL_19 + 3개. rank 타깃, `early_stopping_metric="ic"`, deterministic params. top_n=10, 실제 비용, buffer 없음/3.0. **사전등록 기준**: 3개 구간 전부 val IC(B) > IC(A) 그리고 buffer 순누적 평균 B ≥ A일 때만 채택.
+- **결과**:
+
+  | 구간 | A val_ic | B val_ic | A buf3 net_cum | B buf3 net_cum |
+  |---|---|---|---|---|
+  | W1 | 0.0665 (it 103) | 0.0640 (it 14) | +34.8% | +30.6% |
+  | W2 | 0.0458 (it 55) | 0.0440 (it 22) | +15.9% | +8.6% |
+  | W3 | 0.0218 (it 9) | 0.0246 (it 4) | +65.0% | +71.5% |
+
+  IC는 W3만 개선(+0.0029), W1·W2 하락. buffer 순누적 평균 A +38.5% vs B +36.9%. → **기준 미달, 19개 유지**. 3개 feature를 넣으면 best_iteration이 크게 짧아짐(103 → 14 등) — 새 feature의 단순 반전 신호를 모델이 빨리 흡수한 뒤 조기종료되는 것으로 보이며, 기존 19개가 이미 반전(return_1d, price_to_sma_5 등)을 담고 있어 추가 정보가 적었던 것으로 해석.
+- **부산물(중요)**: 새 타깃 기준 A(현 설정)의 top_n=10 + buffer 3.0은 3개 구간 전부 순누적 흑자(+34.8% / +15.9% / +65.0%, MDD -19.5% / -35.5% / -43.7%) — 항목 35의 이전 타깃 결과(+23.9% / +1.7% / +42.8%)보다 3구간 모두 개선. buffer 엔진을 최종 운용 경로에 넣는 작업(항목 41 유보사항 (d))의 근거가 강해짐.
+- **선택 편향 주의**: gap_sum_5는 validation IC를 본 뒤 고른 후보라 이 실험이 통과했더라도 약한 증거였을 것. 결과가 기각이므로 영향 없음.
+- **다음 단계**: (1) buffer 엔진(top_n=10, buffer 3.0)을 `run_ml_backtest.py` 경로에 넣는 새 결정 사이클 설계(test는 사이클 끝에 1회만). (2) 분봉 매일 수집 자동화 + 분봉 홀드아웃 규칙 확정(항목 44 주의). (3) 평가 지표에 베타중립 IC 추가(Notion 계획 3번).
+
+46. **새 결정 사이클 설계: 판단 시점 A 확정, 분봉은 오버레이, 분봉 전용 split·holdout 잠금, 매일 수집 자동화 (사전등록)**
+
+- **배경**: `ka10080`은 약 1년치(2025-09-01~)만 제공 → 분봉 전체가 daily test(2023-07-01~2026-09-16) 안에 있음(항목 44). daily test는 항목 41에서 이미 1회 사용됐고, 분봉 IC 진단(Notion, 2026-09-24)도 2025-09~2026-09-23 전체를 봤음. 따라서 **daily split을 분봉에 그대로 적용할 수 없고, 2026-07~09도 깨끗한 test가 아님.**
+- **결정 1 — 판단 시점 A**: T일 확정(20:00 KST, 애프터마켓 종료) 후 판단 → T+1 시가 진입 → T+h 종가 청산. 타깃(`entry="next_open"`), 백테스트 엔진, 분봉 진단과 동일. feature는 T일 정규장(09:00~15:30) 전체를 써도 됨(판단이 장 마감 후라 leakage 아님), T+1 이후는 절대 불가. 장중 판단(B)은 타깃·엔진을 새로 만들어야 하고, 진단상 1일 보유 신호가 비용을 못 넘어서(손익분기 24bp < 왕복 ~43bp) 채택 안 함. 항목 42의 14:00 `as_of_snapshot()`은 장중 판단용으로 남겨두되 이번 사이클에서는 쓰지 않음.
+- **결정 2 — 오버레이**: daily 모델(2002~2019 학습, 2020~2023H1 조기종료)은 고정. 2025-09 이후는 daily 입장에서 완전히 out-of-sample. 분봉은 XGBoost에 넣어 재학습하지 않고 `score = z(daily ML) + w·z(intraday)`로만 결합 — 10개월 데이터로 트리 모델을 재학습하기엔 표본이 부족하고, 과거 20년 구간을 분봉 결측으로 채우면 결측 여부가 기간 식별자가 될 위험이 있음. 상호작용(비선형)은 못 잡는 게 대가 — 분봉 2년 이상 쌓이면 재학습 재검토.
+- **분봉 split** (`src/data/intraday_split.py`, 판단일 T 기준):
+
+  | 구간 | 기간 | 용도 |
+  |---|---|---|
+  | dev | 2025-09-01 ~ 2026-06-30 | feature/가중치 결정. 블록 B1(2025-09~12)·B2(2026-01~03)·B3(2026-04~06)로 부호 일관성 확인 |
+  | semi_holdout | 2026-07-01 ~ 2026-09-23 | 이미 진단에 쓰여 반쯤 오염. 부호 확인만, 1회. `STOCKLENS_CONFIRM_INTRADAY_SEMI_HOLDOUT=1` 필요 |
+  | forward | 2026-09-24 ~ | 유일한 깨끗한 holdout. 판단일 60개 이상 쌓인 뒤 1회. `STOCKLENS_CONFIRM_INTRADAY_FORWARD=1` 필요 |
+
+  - **라벨 purge**: `close(T+h)/open(T+1)-1`이 구간 끝을 넘는 행은 제거(예: 2026-06-29 판단의 라벨이 7월 가격을 읽지 않도록). 블록마다 자기 끝에서 purge.
+  - **잠금**: `src/eval/test_lock.py`에 `confirm_holdout_use()` 추가 — 구간마다 별도 환경변수, 하나를 풀어도 다른 구간은 안 풀림. `FORWARD_MIN_DATES=60` 미만이면 환경변수가 있어도 에러.
+  - **forward는 daily 트랙과 공유**: 앞으로 daily 모델/운용 변경(buffer 엔진 등)의 최종 확인도 같은 forward 구간에서 같은 시점에 1회만. 가장 빠른 평가 시점은 2026년 12월 말 전후(추석 연휴 반영 시 대략).
+- **사전등록 체크리스트 (이 사이클)**:
+  - **D1 (daily 운용)**: `run_ml_backtest.py` 경로를 buffer 엔진(`run_buffered_backtest`)으로 전환. 파라미터는 top_n=10, buffer_multiplier=3.0으로 고정(항목 35 그리드 + 항목 45 새 타깃 재확인, 3구간 전부 순수익 흑자). 추가 그리드 탐색 없음.
+  - **I1 (분봉 feature 고정)**: 분봉에서만 계산 가능한 4개 — `vshare_auction`(+), `vshare_open30`(−), `vshare_late`(+), `rv_intraday`(−). 괄호는 부호(진단에서 고정). `range_pct` 등 일봉으로 계산 가능한 것은 제외(`high_low_range`로 이미 19개에 포함). **선택 편향 명시**: 이 후보는 semi_holdout을 포함한 전 기간 진단을 보고 고른 것.
+  - **I2 (분봉 점수, 학습 없음)**: 날짜별 z-score에 부호를 곱해 4개 동일가중 평균.
+  - **I3 (오버레이 가중치)**: w ∈ {0, 0.25, 0.5}, 이 외 값 없음.
+  - **I4 (dev 판정)**: 주지표는 5일 raw 타깃 rank IC(기존 관례), 보조로 베타중립 IC 보고(판정엔 미사용). w>0 중 B1·B2·B3 **세 블록 모두**에서 IC가 w=0보다 높은 값이 있으면 그중 dev 전체 IC가 가장 높은 w를 채택 후보로, 없으면 분봉 오버레이 중단(daily 단독 유지).
+  - **I5 (semi_holdout)**: I4 통과 시에만 1회. 채택 w의 IC 차이 부호가 음수로 뒤집히는지만 확인.
+  - **I6/D2 (forward)**: 판단일 60개 이상 쌓이면 1회. daily 단독(buffer) vs daily+분봉 오버레이(buffer) 비교.
+  - **해석 한계(사전 명시)**: 60거래일 ≈ 5일 비중복 12구간 → IC 평균 표준오차 ≈ 0.2/√12 ≈ 0.06. 기대 개선폭(0.01~0.02)을 확정할 검정력이 없음. forward 결과는 "개선 증명"이 아니라 "기각되지 않음" 수준으로만 해석하고, 결론은 "2025-09 이후 데이터 기준"으로 한정.
+- **운영**: `scripts/nightly_ingest.sh` 추가 — 매 거래일 20:00 KST 이후 분봉(최근 10일, `--lookback-days`)을, 일봉은 금요일에만(수정주가라 매번 전체 이력을 다시 받아 50종목에 수 분 이상 걸리고, 분봉과 달리 언제든 재수집 가능 — `STOCKLENS_NIGHTLY_DAILY=1`로 강제) top50으로 수집, `STOCKLENS_RAW_BACKUP_DIR`가 있으면 분봉 raw를 백업. **분봉 raw는 재생성 불가**(API가 1년치만 제공, `data/raw/`는 gitignore) — `.gitignore` 주석도 "regenerable"에서 수정.
+- **부수 수정**: 커밋 `b1614a4`(타깃 기본값 next_open) 이후 `tests/test_dataset.py`의 타깃 테스트 2개가 옛 close-to-close 공식을 기대해 실패하고 있었음 → `entry="close"`를 명시하고 next_open 기본값 테스트 1개 추가. 신규 `tests/test_intraday_split.py` 6개 포함 전체 200개 통과.
+- **다음 단계**: (1) crontab 등록 후 매일 수집 확인. (2) D1 구현. (3) I1~I4 dev 전용 실험 스크립트 — 분봉 feature 패널 + 고정 daily 모델 점수를 dev 구간에서만 결합.
+
+47. **D1: `run_ml_backtest.py`를 buffer 엔진(top_n=10, buffer 3.0)으로 전환 — 운용 경로가 실험 경로(항목 45 W3)를 정확히 재현, 최종 평가 대상을 소진된 test에서 forward holdout으로 교체**
+
+- **변경** (`scripts/run_ml_backtest.py`): (1) 엔진을 `run_buffered_backtest_with_turnover`로, top_n=10·buffer_multiplier=3.0 고정(항목 46 사전등록 — `STOCKLENS_TOP_N` 환경변수 오버라이드 제거). (2) daily test(2023-07-01~2026-09-16, 항목 41에서 소진)를 더 이상 읽지 않음 — `confirm_final_test_use`/`splits.test` 제거. 최종 평가는 forward holdout(2026-09-24~)만, `src.data.intraday_split.select_segment(..., "forward")`로 읽음(`STOCKLENS_CONFIRM_INTRADAY_FORWARD=1` + 판단일 60개 이상 필요, 조건 미충족 시 메시지 출력 후 정상 종료). (3) 플래그 없이 실행하면 고정 daily 모델 학습 → validation(2020-01~2023-06) 백테스트 3종(ml_buffered / ml_plain / momentum, 동일 비용)까지 수행하고 forward 잠금에서 멈춤. Phase G 버전(top_n=2, test 기준)은 git 이력에 남아 있음.
+- **교차검증 (validation, top50)**: 이 스크립트의 모델은 walk-forward W3 모델과 학습·조기종료 구간이 같으므로 항목 45(A_all19, W3)와 일치해야 함 → 정확히 일치.
+
+  | 전략 | net_cum | 평균/5일 | hit | MDD | 진입/구간 |
+  |---|---|---|---|---|---|
+  | ml_buffered | **+65.0%** | +0.387% | 52.6% | -43.7% | 3.26 |
+  | ml_plain | -2.2% | +0.067% | 50.3% | -43.4% | 10.00 |
+  | momentum | -28.3% | -0.126% | 48.5% | -49.5% | 10.00 |
+
+  best_iteration 9, ML daily rank IC +0.0218(IC>0 52.1%). buffer로 회전율이 10 → 3.26종목/구간(약 67% 감소)으로 줄며 같은 신호의 순수익이 -2.2% → +65.0%로 바뀜 — 비용이 순손실의 주원인이라는 항목 35의 결론과 일치.
+- **주의**: 이 validation 수치는 조기종료에 쓴 구간과 같은 구간에서 잰 것이라 낙관적 편향이 있음(모든 walk-forward 실험과 동일한 관례). buffer 3.0 자체도 이 validation 구간들에서 고른 값. MDD -43.7%는 여전히 큼 — 실전 투입 판단은 forward 결과와 별도의 리스크 관리 설계가 필요.
+- **테스트**: `tests/test_run_ml_backtest_config.py` 3개(사전등록 파라미터 고정, forward 잠금, test split 미사용) 추가, 전체 203개 통과. AGENTS.md 13절의 test lock 적용 스크립트 목록을 실제와 맞게 수정하고 forward holdout 규칙 추가.
+- **다음 단계**: I1~I4 — dev 구간(2025-09~2026-06)에서 분봉 오버레이 실험. 비교 기준은 이 스크립트의 ml_buffered 경로.
+
+48. **I1~I4: 분봉 오버레이 dev 실험 — 사전등록 기준(IC, 3블록 전부)은 w=0.5가 통과. 그러나 롱온리 top-10 수익은 오히려 감소(분봉 점수가 저베타 쪽으로 기울어 상승장에서 불리)**
+
+- **방법** (`scripts/experiment_intraday_overlay_dev.py`, top50, dev 2025-09-01~2026-06-30만, 라벨 purge 적용): 항목 46의 I1~I4 그대로. 분봉 4개 feature(`vshare_auction` +, `vshare_open30` −, `vshare_late` +, `rv_intraday` −)를 날짜별 z-score·부호 곱·평균 후 다시 z-score(학습 없음). `score = z(daily ML) + w·z(intraday)`, w ∈ {0, 0.25, 0.5}. daily 모델은 `run_ml_backtest.py`의 고정 모델(best_iteration 9). 분봉 점수 결측(약 3%)은 0으로 처리해 모든 w가 같은 행으로 평가됨. 패널은 `reports/intraday_ic/features_panel.csv`(2025-09-01~2026-09-23) 재사용 — raw에서 다시 만들어도 dev 구간은 동일해야 함.
+- **결과** (IC = 5일 raw 타깃 날짜별 rank IC. gross/net/MDD는 top-10·buffer 3.0 백테스트, 참고용):
+
+  | 구간 | w | IC | IC_bn | gross | net | MDD | 유니버스 동일가중 |
+  |---|---|---|---|---|---|---|---|
+  | dev | 0 | −0.0041 | +0.0120 | +62.6% | +54.7% | −16.2% | +57.6% |
+  | dev | 0.5 | +0.0135 | +0.0454 | +42.4% | +36.1% | −12.4% | +57.6% |
+  | B1 | 0 → 0.5 | +0.0181 → +0.0230 | +0.041 → +0.046 | +23.6% → +14.3% | +20.5% → +11.9% | | +19.6% |
+  | B2 | 0 → 0.5 | +0.0039 → +0.0287 | +0.015 → +0.058 | +36.4% → +38.8% | +34.3% → +36.5% | | +21.4% |
+  | B3 | 0 → 0.5 | −0.0352 → −0.0020 | −0.017 → +0.052 | +1.8% → +8.8% | +0.6% → +7.2% | | +7.1% |
+
+- **사전등록 판정(I4)**: w=0.25는 B1에서 −0.0006으로 탈락, **w=0.5는 B1 +0.0049 / B2 +0.0247 / B3 +0.0333으로 3블록 전부 통과 → 후보 w=0.5.** 규칙대로 I5(semi_holdout 부호 확인 1회)로 진행.
+- **판정과 별개로 드러난 것(중요)**:
+  1. **daily 모델 단독의 dev IC가 −0.0041** — 2025-09 이후 daily 신호가 사실상 0(항목 32·37의 감쇠 추세가 이어짐). 롱온리 net +54.7%는 대부분 시장 상승이며, 비용 없는 유니버스 동일가중(+57.6%)보다도 낮음.
+  2. **분봉 점수는 강한 저베타 기울기**: 날짜별 rank corr(z_intraday, 60일 beta) 평균 −0.41(daily 점수와는 +0.23). 그래서 베타중립 IC는 크게 오르지만(+0.012 → +0.045), 강한 상승장이었던 dev 구간의 롱온리 top-10에서는 저베타 종목을 사게 돼 gross 수익이 줄어듦(회전율은 2.95 → 2.71로 오히려 감소 — 비용 문제 아님). 하락·횡보 블록(B3)에서는 반대로 도움이 됨.
+  3. **선택 편향**: 4개 feature와 부호는 dev와 semi_holdout을 모두 포함한 기간의 진단(Notion, 2026-09-24)에서 고른 것 → dev 통과는 약한 증거이고, I5(semi_holdout)도 같은 이유로 오염. 깨끗한 판단은 forward에서만 가능.
+- **결정**: 규칙은 결과를 본 뒤 바꾸지 않음 — w=0.5를 후보로 I5 진행. 다만 위 2번 때문에 **forward 평가(I6/D2) 보고 항목에 유니버스 동일가중 수익과 베타중립 IC를 추가**(판정 규칙은 그대로, 보고만 추가 — 결과를 본 뒤의 변경이므로 여기 명시). 롱온리 운용에서 오버레이가 "IC는 좋아지는데 수익은 줄어드는" 형태라면, 시장 중립(롱숏) 또는 베타 제약이 필요한지는 forward 이후 별도 사이클에서 다룸.
+- **테스트**: `tests/test_intraday_overlay.py` 4개(사전등록 feature·부호·w 고정, z-score, 판정 규칙) 추가, 전체 207개 통과. 결과 CSV: `reports/intraday_overlay/dev_results.csv`.
+- **다음 단계**: I5 — semi_holdout(2026-07-01~09-23)에서 w=0.5 vs w=0의 IC 차이 부호만 1회 확인(`STOCKLENS_CONFIRM_INTRADAY_SEMI_HOLDOUT=1`).

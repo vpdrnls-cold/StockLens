@@ -1436,9 +1436,19 @@ Any code path that reads the test split (``splits.test``,
 before that first read. It raises ``TestSetLockedError`` unless the
 environment variable ``STOCKLENS_CONFIRM_FINAL_TEST=1`` is set for
 that run. Currently wired into
-``scripts/run_backtest.py``, ``scripts/run_ml_backtest.py``, and
+``scripts/run_backtest.py`` and
 ``scripts/feature_selection_ic_rerun.py`` -- any new script or
 function that reads the test split must add this call too.
+
+The daily test split (2023-07-01~2026-09-16) was consumed by
+CURRENT_STATUS.md item 41. From item 46 on, the only clean holdout is
+the FORWARD period (2026-09-24~), shared by the daily and intraday
+tracks. Read it only through
+``src.data.intraday_split.select_segment(df, "forward", ...)``, which
+requires ``STOCKLENS_CONFIRM_INTRADAY_FORWARD=1`` and at least
+``FORWARD_MIN_DATES`` decision dates. ``scripts/run_ml_backtest.py``
+reads the forward period this way (item 47) and no longer reads the
+test split.
 
 Before setting ``STOCKLENS_CONFIRM_FINAL_TEST=1`` for a real run,
 confirm every validation-only experiment for the current decision

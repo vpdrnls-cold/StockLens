@@ -15,6 +15,12 @@ Usage (저장소 루트에서, 20:00 KST 이후):
     python3 scripts/ingest_kiwoom_minute_chart_universe.py
     python3 scripts/ingest_kiwoom_minute_chart_universe.py --only 005930 000660
     python3 scripts/ingest_kiwoom_minute_chart_universe.py --no-skip-existing
+    python3 scripts/ingest_kiwoom_minute_chart_universe.py --lookback-days 10   # 매일 증분 수집
+
+--lookback-days N 은 --stop-date 를 "오늘(KST) - N일" 로 정한다. 매일 밤 실행
+(scripts/nightly_ingest.sh)에서는 1년치 전체가 아니라 최근 며칠만 받으면 되므로
+API 호출이 종목당 1페이지 수준으로 줄어든다. 겹치는 봉은 읽는 쪽에서
+타임스탬프 기준으로 중복 제거한다(scripts/intraday_ic_diagnostic.py::load_minute).
 """
 
 from __future__ import annotations
@@ -103,6 +109,12 @@ def main() -> int:
         help="YYYYMMDD. 기본값은 API가 주는 최대치(현재 약 1년)까지 받도록 충분히 과거로 둔다.",
     )
     parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=None,
+        help="지정하면 --stop-date 를 오늘(KST)-N일 로 덮어쓴다 (매일 증분 수집용).",
+    )
+    parser.add_argument(
         "--base-date",
         default=datetime.now(KST).strftime("%Y%m%d"),
         help="가장 최근 날짜 (YYYYMMDD, 기본값: 오늘 KST)",
@@ -123,6 +135,11 @@ def main() -> int:
     args = parser.parse_args()
 
     now_kst = datetime.now(KST)
+    if args.lookback_days is not None:
+        if args.lookback_days < 1:
+            print("--lookback-days 는 1 이상이어야 합니다.", file=sys.stderr)
+            return 1
+        args.stop_date = (now_kst - timedelta(days=args.lookback_days)).strftime("%Y%m%d")
     if now_kst.hour < DAY_CLOSE_HOUR_KST and now_kst.weekday() < 5 and not args.force:
         print(
             f"지금은 {now_kst:%H:%M} KST 입니다. 20:00 이전에 받으면 오늘 봉이 미완성으로 저장됩니다.\n"
