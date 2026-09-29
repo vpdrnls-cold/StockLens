@@ -725,6 +725,7 @@ MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신�
   - forward 구간(2026-09-24 ~ 평가일)은 평가 후 다음 사이클의 dev가 됨. 다음 사이클의 holdout은 **평가일 이후 새로 쌓이는 판단일**(forward2, 최소 60개)이며, 같은 방식으로 잠금.
   - 동점 민감도(항목 52)에서 코드 오름차순 규칙이 분포의 10% 미만 또는 90% 초과 백분위에 있으면, 그 전략의 수익률 수치는 "동점 규칙이 만든 숫자"로 적고 해석에 쓰지 않음(판정과 무관).
   - D2/I6 문턱값은 결과를 본 뒤 바꾸지 않고, 데이터를 더 모아 forward를 다시 보지 않음(항목 50 그대로).
+- **확정(2026-09-29, 재훈)**: 위 두 수정을 그대로 확정하고 코드로 강제 — `verdicts()`가 `i6_status`(not_rejected / rejected / withheld)와 `overlay_deploy`(D2·I6 둘 다 통과 + 커버리지 80% 이상일 때만 True)를 반환, forward 보고서가 `DEPLOY:` 줄로 운용 반영 대상을 직접 출력. D2/I6 판정값 자체(`d2_not_rejected`, `i6_not_rejected`)는 항목 50 그대로 기록. 테스트 3개 추가.
 - **분봉 수집 누락 점검** (`scripts/check_forward_minute_coverage.py`): forward 구간의 (거래일, 종목)마다 forward 평가와 같은 27봉 규칙(`day_features`)으로 ok / incomplete / missing만 판정. 가격·수익률·feature 값·점수는 출력하지 않으므로 forward를 "본" 것이 아님. 전체 커버리지(80% 기준), 100% 미만 종목, 누락 있는 날, 아무 종목도 데이터가 없는 평일(휴장일이면 정상), 수집 지연 경고, 누락을 다시 받는 `--lookback-days N` 명령을 출력. 야간 수집은 최근 10일만 다시 받으므로 **주 1회 실행** 권장. 결과: `reports/forward_coverage/forward_minute_status.csv`.
 - **고정 모델 확인 가드** (`evaluate_forward_holdout.py`): 고정 daily 모델의 `best_iteration`이 9가 아니면(라이브러리 버전·데이터 변경 등) forward 구간을 읽기 **전에** 멈춤 — 사전등록한 모델이 아닌 것으로 1회뿐인 평가를 소진하지 않도록. 실행 전 절차에 커버리지 점검과 이 항목 확인을 추가.
 - **부수 기록(항목 52)**: 재훈 환경에서 순서 100가지로 돌린 validation 결과 — 순누적 +23.0% ~ +115.9%(중앙값 +59.5%, 표준편차 17.9%p), 코드 오름차순 +65.0%는 62백분위, 최악 MDD −50.7%. 20가지 결과와 결론 동일.

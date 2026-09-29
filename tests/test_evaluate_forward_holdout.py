@@ -88,3 +88,25 @@ def test_summarize_ties_percentile() -> None:
 def test_forward_look_requires_the_frozen_model() -> None:
     assert fh.frozen_model_ok(9) is True
     assert fh.frozen_model_ok(8) is False
+
+
+# --- item 53 deployment rules (confirmed 2026-09-29) ---------------------------
+
+
+def test_overlay_deployed_only_when_both_pass() -> None:
+    v = fh.verdicts(_res(0.02, 0.03), coverage=0.95)
+    assert v["i6_status"] == "not_rejected" and v["overlay_deploy"] is True
+
+
+def test_overlay_not_deployed_when_daily_rejected() -> None:
+    v = fh.verdicts(_res(-0.02, 0.01), coverage=0.95)
+    assert v["d2_not_rejected"] is False
+    assert v["i6_not_rejected"] is True  # I6 itself is still recorded as pre-registered
+    assert v["overlay_deploy"] is False
+
+
+def test_i6_withheld_below_coverage_threshold() -> None:
+    v = fh.verdicts(_res(0.02, 0.03), coverage=0.79)
+    assert v["i6_status"] == "withheld" and v["overlay_deploy"] is False
+    assert fh.verdicts(_res(0.02, 0.01), coverage=0.79)["i6_status"] == "withheld"
+    assert fh.verdicts(_res(0.02, 0.03), coverage=0.80)["i6_status"] == "not_rejected"

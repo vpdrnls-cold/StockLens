@@ -131,14 +131,27 @@ def evaluate(part: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
     return res, trades, ics
 
 
-def verdicts(res: pd.DataFrame) -> dict[str, object]:
+def verdicts(res: pd.DataFrame, coverage: float = 1.0) -> dict[str, object]:
+    """D2/I6 exactly as pre-registered (item 50) + the item 53 deployment rules.
+
+    i6_status: "not_rejected" / "rejected", or "withheld" when intraday coverage
+    is below MIN_INTRADAY_COVERAGE (missing bars make overlay == daily, pulling
+    the IC difference toward 0). overlay_deploy needs D2 AND I6 not rejected
+    AND enough coverage -- the overlay is 2/3 daily score by weight.
+    """
     ic = res.set_index("strategy")["ic"]
     diff = float(ic["overlay"] - ic["daily"])
+    d2 = bool(ic["daily"] > 0)
+    i6 = bool(diff > 0)
+    enough = bool(coverage >= MIN_INTRADAY_COVERAGE)
     return {
         "ic_daily": float(ic["daily"]),
-        "d2_not_rejected": bool(ic["daily"] > 0),
+        "d2_not_rejected": d2,
         "ic_diff": diff,
-        "i6_not_rejected": bool(diff > 0),
+        "i6_not_rejected": i6,
+        "intraday_coverage": float(coverage),
+        "i6_status": ("not_rejected" if i6 else "rejected") if enough else "withheld",
+        "overlay_deploy": d2 and i6 and enough,
     }
 
 
@@ -248,7 +261,7 @@ def main() -> None:
               "before trusting the overlay comparison.")
 
     res, trades, ics = evaluate(part)
-    v = verdicts(res)
+    v = verdicts(res, cov)
     sens = tie_sensitivity(part)
     ties = summarize_ties(sens, res, part)
 
@@ -277,8 +290,15 @@ def main() -> None:
     print("=" * 112)
     print(f"D2  IC(daily) = {v['ic_daily']:+.4f}  -> "
           + ("NOT REJECTED: daily signal present out of sample" if v["d2_not_rejected"] else "REJECTED: no daily signal"))
-    print(f"I6  IC(overlay) - IC(daily) = {v['ic_diff']:+.4f}  -> "
-          + ("NOT REJECTED: carry w=0.5 into the production path" if v["i6_not_rejected"] else "REJECTED: drop the overlay"))
+    i6_text = {
+        "not_rejected": "NOT REJECTED",
+        "rejected": "REJECTED: drop the overlay",
+        "withheld": f"WITHHELD: intraday coverage {v['intraday_coverage']:.1%} < {MIN_INTRADAY_COVERAGE:.0%}, "
+                    "retest next cycle",
+    }[v["i6_status"]]
+    print(f"I6  IC(overlay) - IC(daily) = {v['ic_diff']:+.4f}  -> {i6_text}")
+    print("DEPLOY (item 53): " + ("daily + overlay w=0.5" if v["overlay_deploy"]
+          else "daily only" if v["d2_not_rejected"] else "nothing -- see CURRENT_STATUS item 53 case C/D"))
     print("Limit: ~12 non-overlapping 5-day periods, SE(IC) ~ 0.06 -- 'not rejected' is not proof.")
 
     recorder = RunRecorder("forward_holdout", meta={
