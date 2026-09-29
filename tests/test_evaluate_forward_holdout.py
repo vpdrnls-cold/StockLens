@@ -83,3 +83,8 @@ def test_summarize_ties_percentile() -> None:
     out = fh.summarize_ties(sens, res, part, (("daily", "score_w0.0"),)).iloc[0]
     assert out["code_asc_pctile"] == 0.625  # 2 below + half of 1 tie, out of 4
     assert out["median"] == 0.25 and out["mdd_worst"] == -0.3
+
+
+def test_forward_look_requires_the_frozen_model() -> None:
+    assert fh.frozen_model_ok(9) is True
+    assert fh.frozen_model_ok(8) is False

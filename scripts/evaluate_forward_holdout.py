@@ -9,7 +9,12 @@ Before running
   1. Refresh daily bars (the nightly job only fetches them on Fridays):
        STOCKLENS_NIGHTLY_DAILY=1 bash scripts/nightly_ingest.sh
   2. Make sure data/raw/kiwoom/ka10080 has every forward day (the intraday panel
-     is rebuilt from raw here; the saved features_panel.csv stops at 2026-09-23).
+     is rebuilt from raw here; the saved features_panel.csv stops at 2026-09-23):
+       STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/check_forward_minute_coverage.py
+  3. Read the pre-registered follow-up table in CURRENT_STATUS item 53 BEFORE
+     running -- what happens after each D2/I6 outcome is already decided there.
+  The script stops before reading the forward period if the frozen model's
+  best_iteration is not 9 (item 53).
 
     STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 PYTHONPATH=. \\
         python scripts/evaluate_forward_holdout.py
@@ -86,6 +91,7 @@ MIN_INTRADAY_COVERAGE = 0.80  # below this the overlay is mostly the daily score
 STRATEGY_COLS = (("daily", "score_w0.0"), ("overlay", f"score_w{OVERLAY_W}"))
 TIE_PERMUTATIONS = 20  # item 52, fixed before the forward look
 TIE_SEED = 20260928
+EXPECTED_BEST_ITERATION = 9  # item 53: a different frozen model is not the pre-registered one -> stop
 
 
 def evaluate(part: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
@@ -134,6 +140,11 @@ def verdicts(res: pd.DataFrame) -> dict[str, object]:
         "ic_diff": diff,
         "i6_not_rejected": bool(diff > 0),
     }
+
+
+def frozen_model_ok(best_iteration: int) -> bool:
+    """The forward look is valid only for the pre-registered frozen model (item 53)."""
+    return int(best_iteration) == EXPECTED_BEST_ITERATION
 
 
 def tie_orders(codes: list[str], n: int = TIE_PERMUTATIONS, seed: int = TIE_SEED) -> list[list[str]]:
@@ -214,7 +225,11 @@ def main() -> None:
 
     dataset = add_beta(_load_priced_dataset())
     trained, _ = train_frozen_model(dataset)
-    print(f"frozen daily model: best_iteration={trained.best_iteration} (expected 9)")
+    print(f"frozen daily model: best_iteration={trained.best_iteration} (expected {EXPECTED_BEST_ITERATION})")
+    if not frozen_model_ok(trained.best_iteration):
+        print("STOP: this is not the pre-registered frozen model (library version or data changed). "
+              "Fix the environment first -- the forward period was NOT read, so the one look is not spent.")
+        return
 
     panel = load_intraday_panel(args.panel, args.minute_dir)
     df = build_scores(dataset, panel, trained)
