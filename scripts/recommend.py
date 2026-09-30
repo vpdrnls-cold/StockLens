@@ -53,6 +53,7 @@ from src.data.universe import TOP50_UNIVERSE_PATH, load_universe_file
 from src.explanation.model_attribution import explain_pick, shap_contributions
 from src.features.engineering import FEATURE_COLUMNS, build_features
 from src.ml.strategy import predictions_for_dataset
+from src.recommendation import survey
 from src.recommendation.scoring import PROFILES, calibrate_lambda, personalize_scores
 
 KST = timezone(timedelta(hours=9))
@@ -143,9 +144,21 @@ def main() -> None:
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (default: latest date with enough bars)")
     ap.add_argument("--out", default="reports/daily_picks")
     ap.add_argument("--no-save", action="store_true")
-    ap.add_argument("--profile", choices=sorted(PROFILES), default="neutral",
-                    help="투자성향 재랭킹 (기본 neutral = 모델 순위 그대로, 항목 56)")
+    ap.add_argument("--profile", choices=sorted(PROFILES) + ["saved"], default="neutral",
+                    help="투자성향 재랭킹 (기본 neutral = 모델 순위 그대로, 항목 56). "
+                         "saved = scripts/survey.py 로 저장한 진단 결과 사용 (항목 57)")
     args = ap.parse_args()
+    if args.profile == "saved":
+        try:
+            saved = survey.load()
+        except FileNotFoundError:
+            raise SystemExit("저장된 투자성향이 없습니다. 먼저 실행하세요: PYTHONPATH=. python scripts/survey.py")
+        except ValueError as e:
+            raise SystemExit(str(e))
+        if not saved.eligible:
+            raise SystemExit(survey.explain(saved))
+        print(f"저장된 투자성향 사용: {survey.PROFILE_LABELS[saved.profile]}({saved.profile}), 진단일 {saved.created_at[:10]}")
+        args.profile = saved.profile
 
     trained, splits = train_frozen_model(_load_priced_dataset())
     if trained.best_iteration != EXPECTED_BEST_ITERATION:

@@ -35,6 +35,8 @@ htmlcov/
 data/raw/
 # Derived datasets (regenerable with scripts/build_ml_dataset.py)
 data/processed/*.csv
+# Personal investor-profile answers (scripts/survey.py) -- never commit (public repo)
+data/user_profile.json
 
 # Saved experiment time series + figures (regenerable; see src/reporting/run_log.py)
 reports/runs/
