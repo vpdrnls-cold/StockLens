@@ -101,9 +101,10 @@ HOLD/SELL 판단, Explanation)를 신호 데이터 소스 확장(Phase H~J)보�
     3.0x ATR%만 활성. signal-reversal(absolute/percentile)은 walk-forward
     검증 실패로 opt-in 전용(항목 17~26)
 -   Explanation `src/explanation/`(항목 19), 한국어 텍스트 출력
--   CLI/API 진입점(`app.py`)에는 아직 연결되지 않음(스캐폴드 상태)
+-   `scripts/recommend.py`로 CLI 연결 완료(항목 51, 판단일 top-N + TreeSHAP 근거).
+    `app.py`(API/UI)는 아직 스캐폴드 상태
 
-3.7 테스트 — 전체 136개 통과(`pytest.ini`로 `tests/`만 수집)
+3.7 테스트 — 전체 231개 통과(항목 54 기준, `pytest.ini`로 `tests/`만 수집)
 
 ------------------------------------------------------------------------
 
@@ -130,15 +131,22 @@ HOLD/SELL 판단, Explanation)를 신호 데이터 소스 확장(Phase H~J)보�
 
 5. Next Steps (우선순위 순)
 
-1.  유니버스 확장(KOSPI200 시총 상위 50): 인프라 완료(항목 28). 남은 일: (a)
-    `build_universe.py`로 종목 확정, (b) `ingest_kiwoom_daily_chart_batch.py`로 수집,
-    (c) `check_data_coverage.py`로 종목별 이력 확인, (d) `tree_method="exact"` 기준
-    IC·백테스트를 3개 walk-forward 구간에서 재평가(top_n은 5~10도 함께 확인).
-2.  Window1 `best_iteration` 이상 원인 조사.
-3.  모델링 방향 재검토: rank/분류 타겟, 모멘텀과 ML 점수의 앙상블.
-4.  위 1~3 이후에도 daily 기술 feature로 안 되면 Phase H~J(인트라데이,
-    뉴스, 매크로).
-5.  Explanation 레이어를 CLI/API 진입점에 연결(신호가 약한 동안은 낮은 우선순위).
+현재 사이클(항목 46~54)은 forward holdout(2026-09-24~) 평가 대기 중이다.
+판단일 60개(2026-12-22 전후) + 5거래일 라벨 확정 → **2027년 1월 첫 주에 1회** 평가.
+
+1.  **데이터 수집 유지(필수)**: 주 1회 `STOCKLENS_NIGHTLY_DAILY=1 bash scripts/nightly_ingest.sh`
+    → `scripts/check_forward_minute_coverage.py`. 야간 수집은 최근 10일만 다시 받으므로
+    10일 넘게 비우지 않는다(비웠으면 `--lookback-days N`). forward 분봉 커버리지 80% 이상 유지.
+2.  **forward와 무관한 준비 작업(선택, 평가 전 병행 가능)** — forward 데이터를 쓰지 않고,
+    결과를 보고 사전등록한 모델·전략을 바꾸지 않는다.
+    a. 리스크 관리(MDD −44% 수준 대응) 설계·구현 — train/validation만 사용. 항목 53의 경우 A·B 공통 1순위.
+    b. 프로필 재랭킹을 rank 척도 점수에 맞게 재보정(항목 51 후속).
+    c. 설문 기반 개인화(Phase L) 흐름 설계.
+    d. 경우 D 대비: 뉴스·매크로·수급 데이터 소스 조사(수집 시작은 사전등록 후).
+3.  **평가 전 환경 고정(12월)**: xgboost 등 라이브러리 버전 변경 금지(`best_iteration` 9 가드, 항목 53).
+4.  **forward 평가 1회(2027-01 첫 주)**: 항목 50의 절차 그대로 실행 → 결과를 새 항목으로 기록
+    → 항목 53의 경우 A~D 표대로 다음 사이클 진행. forward 구간은 이후 dev가 되고,
+    다음 holdout(forward2)은 평가일 이후 새로 쌓이는 판단일로 한다.
 
 ------------------------------------------------------------------------
 
@@ -166,27 +174,25 @@ HOLD/SELL 판단, Explanation)를 신호 데이터 소스 확장(Phase H~J)보�
 
 7. Current Project Position
 
-Kiwoom API → 완료
-일별 과거 데이터 → 완료(5종목, 2002~2026)
-Daily feature engineering → 완료(27개, 그중 19개 사용)
-예측 문제 정의(target_return_5d, 5일 horizon) → 완료
-Rule-based baseline → 완료
-Feature Selection → 수행 완료, 안정적 개선 없음(항목 15)
-ML 모델 → 구현 완료, baseline 미달(항목 14, 15)
-Out-of-sample 평가 → 수행 완료(테스트 구간은 최종 확인용으로만 사용)
-재현성 → 해결(항목 23~25)
-개인화 / HOLD-SELL / Explanation → 라이브러리 수준 구현 완료
-MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신호 미확인)
-유니버스 확장, Phase H~J → 다음 단계
+Kiwoom API(일봉 ka10081, 분봉 ka10080) → 완료
+일별 과거 데이터 → 완료(top50, 2002~)
+Daily feature engineering → 완료(19개 사용)
+예측 문제 정의(5일, T+1 시가 진입 `entry="next_open"`, rank 타깃) → 완료
+Phase G(daily ML, buffer 엔진 top-10·3.0) → 완료, daily test 소진(항목 41)
+Phase H(분봉) → 수집 자동화·오버레이 후보(w=0.5)·분봉 split/잠금 완료(항목 42~49)
+forward 평가 스크립트·판정 규칙·후속 행동 → 사전 고정 완료(항목 50~54)
+개인화 / HOLD-SELL / Explanation → 라이브러리 수준, Explanation은 CLI 연결(항목 51)
+**현재: forward holdout 데이터 누적 대기(2027-01 첫 주 평가)**
 
 ------------------------------------------------------------------------
 
 8. Current Priority
 
-당장의 우선순위는 인트라데이 수집, 뉴스/매크로 API, 실시간 아키텍처, UI가
-아니다. 우선순위는 "현재 신호가 약한 이유가 5종목 표본의 한계인지, 신호
-자체의 부재인지"를 유니버스 확장으로 가려내는 것이다.
+1순위는 forward holdout을 깨끗하게 지키는 것이다: 분봉 수집 누락 없이 유지하고,
+평가 전까지 forward 구간을 어떤 스크립트로도 읽지 않으며(항목 54), 결과를 본 뒤
+판정 규칙을 바꾸지 않는다.
 
+대기 기간의 개발은 forward 결과와 무관한 것(리스크 관리, 개인화 재보정)만 한다.
 최종 비전에 있다는 이유만으로 범위를 넓히지 않는다.
 
 ------------------------------------------------------------------------
@@ -738,3 +744,57 @@ MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신�
 - **사전등록에 대한 영향**: 판정 규칙(D2/I6), 전략, 파라미터 변경 없음. 빠진 것은 `run_ml_backtest.py`의 forward 출력 중 `ml_plain`(buffer 없는 참고 전략) 행뿐이며, 판정에 쓰이지 않던 값.
 - **구조적 강제**: `tests/test_run_ml_backtest_config.py::test_only_the_forward_evaluation_script_reads_the_forward_holdout` — `scripts/*.py` 중 `select_segment(..., "forward")`를 호출하는 파일이 정확히 `evaluate_forward_holdout.py` 하나인지 검사. AGENTS.md 42절도 같은 규칙으로 수정.
 - **부수 발견(환경변수 의존 테스트)**: `tests/test_evaluate_forward_holdout.py::test_tie_order_changes_results_only_through_ties`가 `STOCKLENS_UNIVERSE` 없이 실행하면 실패하고 있었음. `run_ml_backtest.BUFFERED_CONFIG.allow_partial_universe`가 import 시점에 유니버스 크기로 정해져(core5 → False), 합성 12종목을 엔진이 거부. 이번 변경과 무관한 기존 문제. 평가 코드는 그대로 두고, 테스트에서 `allow_partial_universe=True` 사본으로 바꿔 끼우도록 수정. 관련 테스트 파일 2개 통과 확인(재훈 기기).
+
+55. **포트폴리오 리스크 관리 레이어 사전등록 (소비자 레이어, forward 대기 중 병행 — 항목 53 경우 A·B 후속 준비) — 실험 실행 전 고정**
+
+- **목적**: 운용 경로(고정 daily ML, top-10, buffer 3.0)의 MDD가 validation W3 −43.7%(항목 47) 수준이라 실전 투입이 불가능함. 종목 선택(신호)은 그대로 두고, **전체 투자 비중(exposure)만 조절**해서 MDD를 줄이면서 위험 대비 수익을 유지할 수 있는지 확인.
+- **forward와의 관계**: 이 작업은 forward holdout을 읽지 않고, 항목 50·53의 판정(D2·I6, IC 기준)과 forward 보고서를 바꾸지 않음. 채택된 규칙의 표본 밖 확인은 **forward2**(평가일 이후 새로 쌓이는 판단일, 항목 53)에서 함.
+- **구조** (`src/portfolio/risk_overlay.py`, 신규): 판단일 T마다 T 종가까지의 정보로 exposure e_T ∈ [0, 1]을 정함 → 그 기간(T+1 시가 ~ T+5 종가) 포트폴리오 수익 = e_T × (기존 엔진의 기간 수익), 나머지는 현금(수익 0). 레버리지 없음. 기존 엔진(`buffered.py`)은 건드리지 않고 기간 수익 시계열에 사후 적용.
+  - **비중 변경 비용**: |e_T − e_{T−1}| × 0.315%(매도 쪽 편도 비용 = 수수료 0.015% + 세금 0.20% + 슬리피지 0.10%, 매수 쪽보다 큰 값으로 보수적 적용).
+  - **시장 대용 지수**: 유니버스(top50) 동일가중 일간 수익률의 누적(`universe_ew_index`). 새 데이터 없이 계산 가능. 생존편향(AGENTS.md 23절)이 있으므로 절대 수치가 아니라 후보 간 상대 비교만 신뢰.
+- **후보 (이 4개 외 없음, 파라미터 그리드 탐색 없음)**:
+
+  | 후보 | 규칙 | 고정 파라미터 |
+  |---|---|---|
+  | R0 | 리스크 관리 없음, e = 1 (기준) | — |
+  | R1 변동성 타기팅 | e = min(1, σ* / σ̂_T). σ̂_T = 대용 지수 최근 20거래일 일간 수익률 표준편차 × √252 | σ* = 각 window의 **train 구간** σ̂ 중앙값(validation 미사용) |
+  | R2 추세 필터 | 대용 지수 종가 > 200거래일 이동평균이면 e = 1, 아니면 e = 0 | 200일, 하단 e = 0 |
+  | R3 결합 | e = e(R1) × e(R2) | 위와 동일 |
+
+  - **제외한 것과 이유**: 종목별 손절(3.0×ATR)은 HOLD/SELL 레이어에서 이미 따로 검증됨(항목 17~26), 기간 내 청산은 엔진 수정이 필요해 이번 범위 밖. 종목당 비중 상한은 이미 동일가중 10%라 의미 없음. 전략 자체 낙폭 기반 규칙(DD 컷)은 경로 의존성이 커서 whipsaw 위험 → 이번엔 제외.
+- **평가 구간**: walk-forward validation W1(2012~2015), W2(2016~2019), W3(2020~2023H1). 각 window의 고정 daily 모델은 항목 45(A_all19, rank 타깃, IC 조기종료, `entry="next_open"`)와 같은 설정. 분봉 dev(2025-09~2026-06)는 **보고만**(판정 미사용). test·semi_holdout·forward는 읽지 않음.
+- **사전등록 판정**:
+  - 후보 Rk는 **세 window 모두에서** (a) MDD가 R0보다 5%p 이상 개선(덜 음수) **그리고** (b) Calmar(연환산 순수익 ÷ |MDD|)가 R0 이상일 때 통과.
+  - 통과 후보가 여럿이면 세 window 평균 Calmar가 가장 높은 것. 차이가 0.05 미만이면 단순한 쪽(R2 → R1 → R3 순)을 채택.
+  - 통과 후보가 없으면 R0 유지하고 기록(리스크 관리 없음이 아니라 "이 3개 규칙은 효과 없음"으로 기록).
+  - 보고(판정 미사용): 순누적수익, 연환산 수익·변동성, Sharpe, MDD, 적중률, 평균 exposure, 현금 비중 기간 비율, exposure 변경 비용 합계, 기간별 equity 곡선(`plot_run.py`).
+- **해석 한계(사전 명시)**: validation은 모델 조기종료·buffer 3.0 선택에 이미 쓰인 구간이라 R0 자체가 낙관적. 다만 리스크 규칙은 모델 점수를 쓰지 않고 시장 대용 지수만 쓰므로 이 편향이 후보 간 비교에 주는 영향은 제한적. 후보 3개 비교라 다중비교 여지가 있음 → 채택 규칙도 forward2 확인 전까지는 "후보"로만 취급하고 `recommend.py`에는 exposure를 **참고 정보로만** 출력.
+- **누수 방지**: e_T는 T일 종가까지만 사용(판단 시점 A, 항목 46). 테스트로 강제 — T 이후 가격을 바꿔도 e_T가 변하지 않아야 함.
+- **구현 계획**: (1) `src/portfolio/risk_overlay.py` — `universe_ew_index`, `exposure_vol_target`, `exposure_trend`, `apply_exposure`(비용 포함 기간 수익), `risk_metrics`. (2) `scripts/experiment_risk_overlay_validation.py` — W1~W3 × R0~R3 표 + dev 보고, 결과 `reports/risk_overlay/validation_results.csv`. (3) 테스트: R0 = 기존 엔진 결과와 일치, e ∈ [0, 1], 미래 가격 변경에 e_T 불변, 비용 계산.
+
+55. **포트폴리오 리스크 관리 레이어 사전등록 (소비자 레이어, forward 대기 중 병행 — 항목 53 경우 A·B 후속 준비) — 실험 실행 전 고정**
+
+- **목적**: 운용 경로(고정 daily ML, top-10, buffer 3.0)의 MDD가 validation W3 −43.7%(항목 47) 수준이라 실전 투입이 불가능함. 종목 선택(신호)은 그대로 두고, **전체 투자 비중(exposure)만 조절**해서 MDD를 줄이면서 위험 대비 수익을 유지할 수 있는지 확인.
+- **forward와의 관계**: 이 작업은 forward holdout을 읽지 않고, 항목 50·53의 판정(D2·I6, IC 기준)과 forward 보고서를 바꾸지 않음. 채택된 규칙의 표본 밖 확인은 **forward2**(평가일 이후 새로 쌓이는 판단일, 항목 53)에서 함.
+- **구조** (`src/portfolio/risk_overlay.py`, 신규): 판단일 T마다 T 종가까지의 정보로 exposure e_T ∈ [0, 1]을 정함 → 그 기간(T+1 시가 ~ T+5 종가) 포트폴리오 수익 = e_T × (기존 엔진의 기간 수익), 나머지는 현금(수익 0). 레버리지 없음. 기존 엔진(`buffered.py`)은 건드리지 않고 기간 수익 시계열에 사후 적용.
+  - **비중 변경 비용**: |e_T − e_{T−1}| × 0.315%(매도 쪽 편도 비용 = 수수료 0.015% + 세금 0.20% + 슬리피지 0.10%, 매수 쪽보다 큰 값으로 보수적 적용).
+  - **시장 대용 지수**: 유니버스(top50) 동일가중 일간 수익률의 누적(`universe_ew_index`). 새 데이터 없이 계산 가능. 생존편향(AGENTS.md 23절)이 있으므로 절대 수치가 아니라 후보 간 상대 비교만 신뢰.
+- **후보 (이 4개 외 없음, 파라미터 그리드 탐색 없음)**:
+
+  | 후보 | 규칙 | 고정 파라미터 |
+  |---|---|---|
+  | R0 | 리스크 관리 없음, e = 1 (기준) | — |
+  | R1 변동성 타기팅 | e = min(1, σ* / σ̂_T). σ̂_T = 대용 지수 최근 20거래일 일간 수익률 표준편차 × √252 | σ* = 각 window의 **train 구간** σ̂ 중앙값(validation 미사용) |
+  | R2 추세 필터 | 대용 지수 종가 > 200거래일 이동평균이면 e = 1, 아니면 e = 0 | 200일, 하단 e = 0 |
+  | R3 결합 | e = e(R1) × e(R2) | 위와 동일 |
+
+  - **제외한 것과 이유**: 종목별 손절(3.0×ATR)은 HOLD/SELL 레이어에서 이미 따로 검증됨(항목 17~26), 기간 내 청산은 엔진 수정이 필요해 이번 범위 밖. 종목당 비중 상한은 이미 동일가중 10%라 의미 없음. 전략 자체 낙폭 기반 규칙(DD 컷)은 경로 의존성이 커서 whipsaw 위험 → 이번엔 제외.
+- **평가 구간**: walk-forward validation W1(2012~2015), W2(2016~2019), W3(2020~2023H1). 각 window의 고정 daily 모델은 항목 45(A_all19, rank 타깃, IC 조기종료, `entry="next_open"`)와 같은 설정. 분봉 dev(2025-09~2026-06)는 **보고만**(판정 미사용). test·semi_holdout·forward는 읽지 않음.
+- **사전등록 판정**:
+  - 후보 Rk는 **세 window 모두에서** (a) MDD가 R0보다 5%p 이상 개선(덜 음수) **그리고** (b) Calmar(연환산 순수익 ÷ |MDD|)가 R0 이상일 때 통과.
+  - 통과 후보가 여럿이면 세 window 평균 Calmar가 가장 높은 것. 차이가 0.05 미만이면 단순한 쪽(R2 → R1 → R3 순)을 채택.
+  - 통과 후보가 없으면 R0 유지하고 기록(리스크 관리 없음이 아니라 "이 3개 규칙은 효과 없음"으로 기록).
+  - 보고(판정 미사용): 순누적수익, 연환산 수익·변동성, Sharpe, MDD, 적중률, 평균 exposure, 현금 비중 기간 비율, exposure 변경 비용 합계, 기간별 equity 곡선(`plot_run.py`).
+- **해석 한계(사전 명시)**: validation은 모델 조기종료·buffer 3.0 선택에 이미 쓰인 구간이라 R0 자체가 낙관적. 다만 리스크 규칙은 모델 점수를 쓰지 않고 시장 대용 지수만 쓰므로 이 편향이 후보 간 비교에 주는 영향은 제한적. 후보 3개 비교라 다중비교 여지가 있음 → 채택 규칙도 forward2 확인 전까지는 "후보"로만 취급하고 `recommend.py`에는 exposure를 **참고 정보로만** 출력.
+- **누수 방지**: e_T는 T일 종가까지만 사용(판단 시점 A, 항목 46). 테스트로 강제 — T 이후 가격을 바꿔도 e_T가 변하지 않아야 함.
+- **구현 계획**: (1) `src/portfolio/risk_overlay.py` — `universe_ew_index`, `exposure_vol_target`, `exposure_trend`, `apply_exposure`(비용 포함 기간 수익), `risk_metrics`. (2) `scripts/experiment_risk_overlay_validation.py` — W1~W3 × R0~R3 표 + dev 보고, 결과 `reports/risk_overlay/validation_results.csv`. (3) 테스트: R0 = 기존 엔진 결과와 일치, e ∈ [0, 1], 미래 가격 변경에 e_T 불변, 비용 계산.
