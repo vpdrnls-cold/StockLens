@@ -1,6 +1,6 @@
-"""Daily ML strategy through the buffered engine -- validation check + forward holdout.
+"""Daily ML strategy through the buffered engine -- validation check only.
 
-CURRENT_STATUS item 47 (pre-registered item 46, D1).
+CURRENT_STATUS item 47 (pre-registered item 46, D1); forward path removed in item 54.
 
 What changed vs the Phase G version (item 41)
   - Engine: ``run_buffered_backtest`` with top_n=10 and buffer_multiplier=3.0
@@ -9,12 +9,14 @@ What changed vs the Phase G version (item 41)
     pre-registration -- there is deliberately no environment override.
   - Final evaluation period: the daily test split (2023-07-01~2026-09-16) was
     consumed by item 41 and is no longer read here at all. The only clean
-    holdout is the FORWARD period (2026-09-24~, collected nightly by
-    scripts/nightly_ingest.sh), shared with the intraday track (item 46). It is
-    locked by ``src.data.intraday_split`` until at least 60 decision dates exist
-    AND STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 is set for that one run.
+    holdout is the FORWARD period (2026-09-24~), shared with the intraday track
+    (item 46), and this script does NOT read it either (item 54): the one
+    forward look is ``scripts/evaluate_forward_holdout.py``, which evaluates this
+    same buffered daily strategy (D2) together with the overlay (I6). Two
+    scripts able to open the forward period meant two possible looks.
+    ``tests/test_run_ml_backtest_config.py`` fails if any other script reads it.
 
-What runs without any flag (safe to rerun)
+What this script does (safe to rerun, never needs a flag)
   1. Train the frozen daily model: train 2002-10-29~2019-12-31, early stopping
      on validation 2020-01-01~2023-06-30; per-date rank target, IC-based early
      stopping, deterministic params (items 36/38).
@@ -26,13 +28,12 @@ What runs without any flag (safe to rerun)
      end and validation window), so ml_buffered / ml_plain must reproduce item 45
      (A_all19, W3): buffered net_cum +65.0% / MDD -43.7%, plain net_cum -2.2%.
      A mismatch means the production path differs from the experiment path.
-  3. Stop at the forward lock.
 
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/run_ml_backtest.py
 
-Forward evaluation (ONCE, after >= 60 forward decision dates; not before ~late Dec 2026)
-
-    STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 PYTHONPATH=. python scripts/run_ml_backtest.py
+``train_frozen_model``, ``trading_calendar`` and the configs here are imported
+by ``scripts/evaluate_forward_holdout.py``, so the forward evaluation uses
+exactly this model and these costs.
 
 The Phase G version (momentum vs ML on the test split, top_n=2) is in git
 history before this change (item 41) if it ever needs to be reproduced.
@@ -51,15 +52,12 @@ from src.backtest.baseline import (
 )
 from src.backtest.buffered import BufferedBaselineConfig, run_buffered_backtest_with_turnover
 from src.data.dataset import build_combined_dataset, split_by_time
-from src.data.intraday_split import IntradaySplitError, select_segment
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
-from src.eval.test_lock import TestSetLockedError
 from src.features.engineering import FEATURE_COLUMNS
 from src.ml.cross_section import daily_rank_ic, rank_by_date, summarize_ic
 from src.ml.strategy import make_model_score_fn, predictions_for_dataset
 from src.models.predict import TrainedModel, train_model
-from src.reporting.run_log import RunRecorder
 
 # core5 by default; STOCKLENS_UNIVERSE=top50 selects the 50-stock universe.
 STOCK_CODES = get_universe()
@@ -199,7 +197,6 @@ def main() -> None:
     print(f"Best iteration: {trained.best_iteration}")
     print()
 
-    # --- 1. validation check (no flag needed) ---------------------------------
     table, _, ic = evaluate_period(splits.validation, trained)
     _print_table(
         f"VALIDATION {splits.validation['trade_date'].min():%Y-%m-%d} ~ "
@@ -213,37 +210,7 @@ def main() -> None:
         f"(expected +65.0%), ml_plain {got['ml_plain']:+.1%} (expected -2.2%) -> "
         f"{'MATCH' if ok else 'MISMATCH -- production path differs from experiment path'}"
     )
-    print()
-
-    # --- 2. forward holdout (locked) -------------------------------------------
-    try:
-        forward = select_segment(
-            dataset, "forward", caller="run_ml_backtest.py", horizon=5, calendar=trading_calendar()
-        )
-    except (TestSetLockedError, IntradaySplitError) as locked:
-        print(f"Forward holdout not evaluated: {locked}")
-        return
-    table, trades, ic = evaluate_period(forward, trained)
-    _print_table(
-        f"FORWARD HOLDOUT {forward['trade_date'].min():%Y-%m-%d} ~ {forward['trade_date'].max():%Y-%m-%d}",
-        table, ic,
-    )
-
-    recorder = RunRecorder(
-        "run_ml_backtest_forward",
-        meta={
-            "script": "scripts/run_ml_backtest.py",
-            "split": "FORWARD holdout (confirmed via STOCKLENS_CONFIRM_INTRADAY_FORWARD)",
-            "universe_size": len(STOCK_CODES),
-            "top_n": TOP_N,
-            "buffer_multiplier": BUFFER_MULTIPLIER,
-            "best_iteration": trained.best_iteration,
-        },
-    )
-    for name, t in trades.items():
-        recorder.add_trades("forward", name, t)
-    recorder.add_ic("forward", "ml", ic)
-    recorder.save()
+    print("\nForward holdout is evaluated only by scripts/evaluate_forward_holdout.py (item 54).")
 
 
 if __name__ == "__main__":

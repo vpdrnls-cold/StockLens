@@ -1,6 +1,8 @@
 """Pre-registered forward decisions (CURRENT_STATUS items 46/50: D2 + I6)."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 
@@ -68,7 +70,11 @@ def test_tie_stats_counts_ties_at_the_cutoff() -> None:
     assert s["at_or_above_topn"] == 4
 
 
-def test_tie_order_changes_results_only_through_ties() -> None:
+def test_tie_order_changes_results_only_through_ties(monkeypatch) -> None:
+    # BUFFERED_CONFIG.allow_partial_universe is fixed at import from
+    # STOCKLENS_UNIVERSE (core5 -> False), which would reject the 12 synthetic
+    # stocks here. Force it so the test does not depend on that variable.
+    monkeypatch.setattr(fh, "BUFFERED_CONFIG", replace(fh.BUFFERED_CONFIG, allow_partial_universe=True))
     strat = (("daily", "score_w0.0"),)
     tie_free = fh.tie_sensitivity(_synthetic_part(tied=False), strat, n=5)
     assert tie_free["net_cum"].nunique() == 1

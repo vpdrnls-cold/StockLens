@@ -1,5 +1,8 @@
-"""Guards for the pre-registered D1 settings (CURRENT_STATUS items 46/47)."""
+"""Guards for the pre-registered D1 settings (CURRENT_STATUS items 46/47/54)."""
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -29,3 +32,18 @@ def test_script_no_longer_reads_the_consumed_test_split() -> None:
     source = open(rmb.__file__, encoding="utf-8").read()
     assert "splits.test" not in source
     assert "confirm_final_test_use" not in source
+
+
+# Item 54: the forward holdout is looked at once, so exactly one script may open it.
+FORWARD_READERS = {"evaluate_forward_holdout.py"}
+_FORWARD_CALL = re.compile(r"select_segment\([^)]*[\"']forward[\"']")
+
+
+def test_only_the_forward_evaluation_script_reads_the_forward_holdout() -> None:
+    scripts_dir = Path(rmb.__file__).parent
+    readers = {
+        path.name
+        for path in scripts_dir.glob("*.py")
+        if _FORWARD_CALL.search(path.read_text(encoding="utf-8"))
+    }
+    assert readers == FORWARD_READERS

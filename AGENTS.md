@@ -1446,9 +1446,14 @@ the FORWARD period (2026-09-24~), shared by the daily and intraday
 tracks. Read it only through
 ``src.data.intraday_split.select_segment(df, "forward", ...)``, which
 requires ``STOCKLENS_CONFIRM_INTRADAY_FORWARD=1`` and at least
-``FORWARD_MIN_DATES`` decision dates. ``scripts/run_ml_backtest.py``
-reads the forward period this way (item 47) and no longer reads the
-test split.
+``FORWARD_MIN_DATES`` decision dates. Exactly ONE script may open the
+forward period: ``scripts/evaluate_forward_holdout.py`` (item 54).
+``scripts/run_ml_backtest.py`` reads neither the test split nor the
+forward period any more -- when both scripts could open forward, the
+one look could silently become two.
+``tests/test_run_ml_backtest_config.py`` fails if any other script in
+``scripts/`` calls ``select_segment(..., "forward")``; a new forward
+reader must replace that script, not be added next to it.
 
 Before setting ``STOCKLENS_CONFIRM_FINAL_TEST=1`` for a real run,
 confirm every validation-only experiment for the current decision

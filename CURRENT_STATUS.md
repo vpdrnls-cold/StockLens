@@ -730,3 +730,11 @@ MVP 통과 → 미달(daily 기술 feature 단독으로는 baseline 초과 신�
 - **고정 모델 확인 가드** (`evaluate_forward_holdout.py`): 고정 daily 모델의 `best_iteration`이 9가 아니면(라이브러리 버전·데이터 변경 등) forward 구간을 읽기 **전에** 멈춤 — 사전등록한 모델이 아닌 것으로 1회뿐인 평가를 소진하지 않도록. 실행 전 절차에 커버리지 점검과 이 항목 확인을 추가.
 - **부수 기록(항목 52)**: 재훈 환경에서 순서 100가지로 돌린 validation 결과 — 순누적 +23.0% ~ +115.9%(중앙값 +59.5%, 표준편차 17.9%p), 코드 오름차순 +65.0%는 62백분위, 최악 MDD −50.7%. 20가지 결과와 결론 동일.
 - **테스트**: `tests/test_check_forward_minute_coverage.py` 3개(27봉 규칙, 상태 분류·빈 평일, 재수집 일수), `tests/test_evaluate_forward_holdout.py` 1개(고정 모델 가드) 추가, 전체 227개 통과.
+
+54. **forward holdout 이중 접근 경로 제거 — forward를 여는 스크립트를 `evaluate_forward_holdout.py` 하나로 고정 (forward 데이터를 보기 전, 2026-09-29)**
+
+- **문제**: 항목 47에서 `run_ml_backtest.py`에 forward 평가 경로를 넣었고, 항목 50에서 `evaluate_forward_holdout.py`를 따로 만들었음. 두 스크립트 모두 같은 환경변수(`STOCKLENS_CONFIRM_INTRADAY_FORWARD=1`)로 forward를 열 수 있었고, `run_ml_backtest.py` docstring은 여전히 "이 스크립트로 forward 평가"라고 안내했음. 둘 다 실행하면 1회뿐인 forward 확인이 2회가 됨 — 항목 30·31의 "다른 이유로 재실행하다 test를 다시 본" 문제와 같은 구조.
+- **조치**: `run_ml_backtest.py`에서 forward 구간(`select_segment(..., "forward")`, forward 결과 저장)을 삭제. 이제 validation 백테스트 + 항목 45 교차검증만 수행(플래그 불필요). `train_frozen_model`·`trading_calendar`·비용 설정은 그대로 두어 `evaluate_forward_holdout.py`가 계속 import해 같은 모델·비용을 씀. forward 평가 절차(항목 50·53)는 변경 없음 — 원래도 `evaluate_forward_holdout.py`만 지정했고, D2(daily buffer 전략)는 그 스크립트에서 평가됨.
+- **사전등록에 대한 영향**: 판정 규칙(D2/I6), 전략, 파라미터 변경 없음. 빠진 것은 `run_ml_backtest.py`의 forward 출력 중 `ml_plain`(buffer 없는 참고 전략) 행뿐이며, 판정에 쓰이지 않던 값.
+- **구조적 강제**: `tests/test_run_ml_backtest_config.py::test_only_the_forward_evaluation_script_reads_the_forward_holdout` — `scripts/*.py` 중 `select_segment(..., "forward")`를 호출하는 파일이 정확히 `evaluate_forward_holdout.py` 하나인지 검사. AGENTS.md 42절도 같은 규칙으로 수정.
+- **부수 발견(환경변수 의존 테스트)**: `tests/test_evaluate_forward_holdout.py::test_tie_order_changes_results_only_through_ties`가 `STOCKLENS_UNIVERSE` 없이 실행하면 실패하고 있었음. `run_ml_backtest.BUFFERED_CONFIG.allow_partial_universe`가 import 시점에 유니버스 크기로 정해져(core5 → False), 합성 12종목을 엔진이 거부. 이번 변경과 무관한 기존 문제. 평가 코드는 그대로 두고, 테스트에서 `allow_partial_universe=True` 사본으로 바꿔 끼우도록 수정. 관련 테스트 파일 2개 통과 확인(재훈 기기).
