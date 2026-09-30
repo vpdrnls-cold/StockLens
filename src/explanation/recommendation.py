@@ -10,8 +10,9 @@ the fact.
 This module computes nothing new. It only formats the columns
 ``src.recommendation.scoring.personalize_scores`` /
 ``top_n_recommendations`` already produced --
-``predicted_return``, ``contribution_risk``, ``contribution_momentum``,
-``contribution_volume``, ``personalized_score``, ``rank``, ``profile``
+``predicted_return``, ``contribution_model``, ``contribution_risk``,
+``contribution_momentum``, ``contribution_volume``, ``personalized_score``,
+``rank``, ``profile``
 -- into sentences a user can read. If a number does not already exist
 on the row, it does not appear in the explanation.
 
@@ -34,23 +35,24 @@ REQUIRED_COLUMNS = {
     "profile",
     "predicted_return",
     "personalized_score",
+    "contribution_model",
     "contribution_risk",
     "contribution_momentum",
     "contribution_volume",
 }
 
-# Contributions smaller than this (in the same units as personalized_score,
-# e.g. 0.0005 = 0.05%p) are treated as "not meaningfully active" and left
+# Since item 56 every term is on the unit-free z scale (per-date standardized
+# rank). Contributions smaller than this are treated as "not meaningfully active" and left
 # out of the sentence. This keeps a profile whose weight for that term is
 # exactly 0.0 (e.g. neutral's risk_weight) -- or merely negligible for
 # that stock/date -- from generating a contributor line that says nothing
 # ("risk contribution: +0.00%p").
-_CONTRIBUTION_EPSILON = 0.0005
+_CONTRIBUTION_EPSILON = 0.01
 
 _CONTRIBUTOR_LABELS = {
     "contribution_momentum": "모멘텀",
     "contribution_volume": "거래량",
-    "contribution_risk": "리스크 페널티",
+    "contribution_risk": "변동성 조정",
 }
 
 # Fixed display order when magnitudes tie (rare, e.g. both exactly 0
@@ -114,8 +116,8 @@ def _format_text(row: pd.Series, contributors: list[tuple[str, float]]) -> str:
 
     header = (
         f"[{int(row['rank'])}위] {row['stock_code']} ({date_str}, {row['profile']} 프로필) "
-        f"— 모델 예측수익률 {row['predicted_return']:+.2%}, "
-        f"개인화 점수 {row['personalized_score']:+.2%}"
+        f"— 모델 순위 점수 {row['contribution_model']:+.2f}, "
+        f"개인화 점수 {row['personalized_score']:+.2f} (둘 다 그날 종목 간 표준화 값)"
     )
 
     if not contributors:
@@ -123,7 +125,7 @@ def _format_text(row: pd.Series, contributors: list[tuple[str, float]]) -> str:
 
     lines = [header + ":"]
     for label, value in contributors:
-        lines.append(f"  - {label} 기여: {value:+.2%}p")
+        lines.append(f"  - {label} 기여: {value:+.2f}")
 
     return "\n".join(lines)
 

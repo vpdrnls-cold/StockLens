@@ -1,178 +1,216 @@
-"""Check whether the 3 personalization profiles actually produce
-differentiated, explainable behavior -- per AGENTS.md 9: "Do not
-hard-code these as arbitrary weights and call them scientifically
-valid. Use backtesting and experiments to determine whether
-profile-specific ranking improves useful outcomes."
+"""Profile re-ranking on the validation windows (CURRENT_STATUS item 56, pre-registered).
 
-This is NOT another attempt to beat the rule-based baseline (Phase G
-already answered that question -- see CURRENT_STATUS.md item 15). The
-goal here is narrower: given the SAME daily model predictions,
-does re-ranking by profile actually shift the resulting portfolio's
-risk/return shape in the direction AGENTS.md 9 describes (conservative
-= lower volatility of returns, aggressive = more momentum/volume
-concentration), or is it just noise?
+Question
+  After moving every term to the unit-free per-date standardized-rank scale
+  and calibrating each profile's tilt strength on TRAIN so that it keeps a
+  mean rank correlation of 0.8 with the model ranking: do the profiles
+  (1) behave in the intended direction and (2) keep the model signal?
+  This is NOT an attempt to beat anything on return -- profile return
+  differences are risk preferences, not better/worse.
 
-Runs on VALIDATION only (test period untouched, per AGENTS.md 13).
+Profiles (fixed in item 56, src/recommendation/scoring.py)
+  conservative  penalize volatility_20
+  neutral       model ranking unchanged (lambda = 0)
+  aggressive    reward volatility_20 + unusual volume_ratio_20 (no momentum)
 
-Run from the repo root:
-    PYTHONPATH=. python3 scripts/evaluate_personalization.py
+Setup
+  Walk-forward W1 (2012-2015), W2 (2016-2019), W3 (2020-2023H1); same model
+  as items 45/55 (A_all19, rank target, IC early stopping, entry next_open);
+  deploy engine (top-10, buffer 3.0, real costs). Lambda per profile from
+  that window's TRAIN rows only (in-sample model scores; no returns used).
+  Intraday dev (2025-09~2026-06, W3 model and lambda) is REPORTED ONLY.
+  test / semi_holdout / forward are never read.
+
+Decision (pre-registered, all 3 windows)
+  conservative passes iff  hold_vol(cons) < hold_vol(neutral)
+                           AND period-return std(cons) < std(neutral)
+                           AND model rank corr >= 0.7 AND IC >= 0
+  aggressive passes iff    hold_vol(aggr) > hold_vol(neutral)
+                           AND model rank corr >= 0.7 AND IC >= 0
+  hold_vol = mean volatility_20 of the held stocks over all periods.
+
+Cross-check: neutral in W3 must reproduce item 45/47 ml_buffered (+65.0%).
+
+    STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/evaluate_personalization.py
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-from src.backtest.baseline import (
-    BaselineConfig,
-    calculate_performance,
-    run_baseline_backtest,
-    trades_to_dataframe,
+from scripts.walk_forward_backtest_compare import (
+    ALL_19,
+    DETERMINISTIC_PARAMS,
+    NET_CONFIG,
+    WINDOWS,
+    load_priced_dataset,
+    to_data_by_stock,
 )
-from src.data.dataset import build_combined_dataset, split_by_time
-from src.data.storage import HistoricalStorage
-from src.features.engineering import FEATURE_COLUMNS
+from src.backtest.baseline import calculate_performance, trades_to_dataframe
+from src.backtest.buffered import BufferedBaselineConfig, run_buffered_backtest_with_turnover
+from src.data.dataset import TEST_END_DATE, TEST_START_DATE, TRAIN_START_DATE, split_by_time
+from src.data.intraday_split import select_segment
+from src.ml.cross_section import daily_rank_ic, rank_by_date, summarize_ic
 from src.ml.strategy import predictions_for_dataset
 from src.models.predict import train_model
-from src.recommendation.scoring import PROFILES, make_profile_score_fn, personalize_scores
-
-STOCK_CODES = ("000660", "005380", "005930", "035420", "035720")
-
-CONFIG = BaselineConfig(
-    lookback_days=5,
-    holding_days=5,
-    buy_fee=0.00015,
-    sell_fee=0.00015,
-    sell_tax=0.0020,
-    buy_slippage=0.0010,
-    sell_slippage=0.0010,
+from src.portfolio.risk_overlay import PERIODS_PER_YEAR, period_returns
+from src.recommendation.scoring import (
+    PROFILES,
+    calibrate_lambda,
+    make_profile_score_fn,
+    mean_rank_corr,
+    personalize_scores,
 )
-TOP_N = 2
 
-SIGNAL_COLUMNS = [
-    "trade_date",
-    "stock_code",
-    "volatility_20",
-    "price_to_sma_5",
-    "volume_ratio_20",
-]
-
-
-def _load_priced_dataset() -> pd.DataFrame:
-    storage = HistoricalStorage("data")
-
-    stock_bars = {
-        stock_code: storage.load_daily_bars(stock_code) for stock_code in STOCK_CODES
-    }
-
-    dataset = build_combined_dataset(stock_bars)
-    dataset["trade_date"] = pd.to_datetime(dataset["trade_date"])
-    # volume_change_1d can divide by zero on a zero-volume day; XGBoost
-    # handles NaN natively but not inf (see CURRENT_STATUS.md /
-    # scripts/feature_selection_ic_rerun.py for the same fix).
-    dataset[list(FEATURE_COLUMNS)] = dataset[list(FEATURE_COLUMNS)].replace(
-        [np.inf, -np.inf], np.nan
-    )
-
-    prices = [
-        {
-            "trade_date": pd.Timestamp(bar.trade_date),
-            "stock_code": stock_code,
-            "open_price": float(bar.open_price),
-            "close_price": float(bar.close_price),
-        }
-        for stock_code, bars in stock_bars.items()
-        for bar in bars
-    ]
-
-    return dataset.merge(
-        pd.DataFrame(prices),
-        on=["trade_date", "stock_code"],
-        how="left",
-        validate="one_to_one",
-    )
+TOP_N = 10
+BUFFER = 3.0
+BUFFERED_NET_CONFIG = BufferedBaselineConfig(
+    **{f: getattr(NET_CONFIG, f) for f in NET_CONFIG.__dataclass_fields__},
+    buffer_multiplier=BUFFER,
+)
+MIN_MODEL_CORR = 0.7
+MIN_IC = 0.0
+EXPECTED_W3_NEUTRAL = 0.650  # item 45 / 47
+SIGNAL_COLUMNS = ["trade_date", "stock_code", "volatility_20", "price_to_sma_5", "volume_ratio_20"]
+OUT_DIR = Path("reports/personalization")
+CALLER = "evaluate_personalization.py"
 
 
-def _to_data_by_stock(dataset: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    return {
-        str(stock_code): (
-            group[["stock_code", "trade_date", "open_price", "close_price"]]
-            .sort_values("trade_date")
-            .reset_index(drop=True)
+def signals_for(trained, rows: pd.DataFrame) -> pd.DataFrame:
+    preds = predictions_for_dataset(trained, rows)
+    sig = rows[SIGNAL_COLUMNS + ["target_return_5d"]].copy()
+    sig["trade_date"] = pd.to_datetime(sig["trade_date"])
+    return sig.merge(preds, on=["trade_date", "stock_code"], validate="one_to_one")
+
+
+def top_sets(scored: pd.DataFrame, col: str, n: int = TOP_N) -> pd.Series:
+    ordered = scored.sort_values(["trade_date", col, "stock_code"], ascending=[True, False, True])
+    return ordered.groupby("trade_date")["stock_code"].apply(lambda s: set(s.head(n)))
+
+
+def evaluate_block(label: str, period: pd.DataFrame, trained, lambdas: dict[str, float]) -> list[dict]:
+    sig = signals_for(trained, period)
+    data_by_stock = to_data_by_stock(period)
+    vol_lookup = sig.set_index(["trade_date", "stock_code"])["volatility_20"]
+    neutral_top = None
+    rows = []
+    for name in PROFILES:
+        scored = personalize_scores(sig, name, lam=lambdas[name])
+        trades, turnover = run_buffered_backtest_with_turnover(
+            data_by_stock, BUFFERED_NET_CONFIG, score_fn=make_profile_score_fn(scored), top_n=TOP_N
         )
-        for stock_code, group in dataset.groupby("stock_code")
+        perf = calculate_performance(trades)
+        pr = period_returns(trades)
+        tdf = trades_to_dataframe(trades)
+        keys = list(zip(pd.to_datetime(tdf["decision_date"]), tdf["stock_code"]))
+        hold_vol = float(vol_lookup.reindex(keys).mean())
+        std = float(pr.std(ddof=1))
+        ic = summarize_ic(daily_rank_ic(scored.dropna(subset=["target_return_5d"]), "personalized_score"))
+        tops = top_sets(scored, "personalized_score")
+        if name == "neutral":
+            neutral_top = tops
+        rows.append({
+            "window": label,
+            "profile": name,
+            "lambda": lambdas[name],
+            "net_cum": perf["total_return"],
+            "sharpe": float(pr.mean() / std * np.sqrt(PERIODS_PER_YEAR)) if std > 0 else float("nan"),
+            "mdd": perf["max_drawdown"],
+            "hit_rate": perf["win_rate"],
+            "period_std": std,
+            "hold_vol": hold_vol,
+            "ic": ic.mean_ic,
+            "model_corr": mean_rank_corr(scored["personalized_score"], scored["predicted_return"], scored["trade_date"]),
+            "entries_per_period": turnover["entries_per_period"],
+            "_tops": tops,
+        })
+    for r in rows:
+        common = r["_tops"].index.intersection(neutral_top.index)
+        r["top10_overlap"] = float(np.mean([len(r["_tops"][d] & neutral_top[d]) / TOP_N for d in common]))
+        del r["_tops"]
+    return rows
+
+
+def decide(results: pd.DataFrame) -> dict[str, bool]:
+    w = {k: results.pivot(index="window", columns="profile", values=k)
+         for k in ("hold_vol", "period_std", "model_corr", "ic")}
+    keep = lambda p: bool(((w["model_corr"][p] >= MIN_MODEL_CORR) & (w["ic"][p] >= MIN_IC)).all())
+    return {
+        "conservative": bool(
+            (w["hold_vol"]["conservative"] < w["hold_vol"]["neutral"]).all()
+            and (w["period_std"]["conservative"] < w["period_std"]["neutral"]).all()
+            and keep("conservative")
+        ),
+        "aggressive": bool((w["hold_vol"]["aggressive"] > w["hold_vol"]["neutral"]).all() and keep("aggressive")),
     }
-
-
-def _period_return_stats(trades: list) -> tuple[float, float]:
-    """(mean, std) of per-decision-date portfolio returns -- the same
-    grouping calculate_performance uses internally, exposed here
-    because "volatility of realized returns" is exactly what a
-    conservative profile is supposed to reduce, and
-    calculate_performance doesn't report it directly.
-    """
-    if not trades:
-        return float("nan"), float("nan")
-
-    trades_df = trades_to_dataframe(trades)
-    period_returns = trades_df.groupby("decision_date").apply(
-        lambda group: float((group["weight"] * group["net_return"]).sum())
-    )
-    return float(period_returns.mean()), float(period_returns.std())
 
 
 def main() -> None:
-    dataset = _load_priced_dataset()
-    splits = split_by_time(dataset)
-
-    print("=== Training daily model (train -> validation early stopping) ===")
-    trained = train_model(
-        splits.train,
-        splits.train["target_return_5d"],
-        splits.validation,
-        splits.validation["target_return_5d"],
-    )
-    print(f"Best iteration: {trained.best_iteration}")
-    print()
-
-    predictions = predictions_for_dataset(trained, splits.validation)
-    signals = splits.validation[SIGNAL_COLUMNS].merge(
-        predictions, on=["trade_date", "stock_code"], validate="one_to_one"
-    )
-
-    data_by_stock = _to_data_by_stock(splits.validation)
-
-    print(f"=== Personalization comparison on VALIDATION (top_n={TOP_N}) ===\n")
-    print(
-        f"{'profile':<14}{'cum_return':>12}{'hit_rate':>10}{'mdd':>10}"
-        f"{'avg_period':>12}{'std_period':>12}"
-    )
-
-    for name, profile in PROFILES.items():
-        scored = personalize_scores(signals, profile)
-        score_fn = make_profile_score_fn(scored)
-        trades = run_baseline_backtest(
-            data_by_stock, config=CONFIG, score_fn=score_fn, top_n=TOP_N
+    dataset = load_priced_dataset()
+    rows, w3 = [], None
+    for label, train_end, val_start, val_end in WINDOWS:
+        assert pd.Timestamp(val_end) < pd.Timestamp(TEST_START_DATE)
+        splits = split_by_time(
+            dataset,
+            train_start=TRAIN_START_DATE, train_end=train_end,
+            validation_start=val_start, validation_end=val_end,
+            test_start=TEST_START_DATE, test_end=TEST_END_DATE,
         )
-        perf = calculate_performance(trades)
-        avg_period, std_period = _period_return_stats(trades)
-
-        print(
-            f"{name:<14}{perf['total_return']:>11.2%} "
-            f"{perf['win_rate']:>9.2%} {perf['max_drawdown']:>9.2%} "
-            f"{avg_period:>11.4%} {std_period:>11.4%}"
+        trained = train_model(
+            splits.train, rank_by_date(splits.train, "target_return_5d"),
+            splits.validation, rank_by_date(splits.validation, "target_return_5d"),
+            feature_columns=tuple(ALL_19), params=DETERMINISTIC_PARAMS,
+            early_stopping_metric="ic",
         )
+        train_sig = signals_for(trained, splits.train).drop(columns=["target_return_5d"])  # no outcomes
+        lambdas = {name: calibrate_lambda(train_sig, name) for name in PROFILES}
+        print(f"{label}: best_iteration={trained.best_iteration}, "
+              + ", ".join(f"lambda[{k}]={v:.3f}" for k, v in lambdas.items()))
+        rows += evaluate_block(label, splits.validation, trained, lambdas)
+        w3 = (trained, lambdas)
 
-    print(
-        "\nInterpretation: 'neutral' should match the plain ML-scored "
-        "strategy exactly (personalized_score == predicted_return). "
-        "If 'conservative' does not show a lower std_period than "
-        "'neutral', or 'aggressive' does not show a different "
-        "(typically higher) std_period, the current weights are not "
-        "actually differentiating risk the way AGENTS.md 9 describes, "
-        "and should be revisited before being treated as more than a "
-        "first guess."
-    )
+    results = pd.DataFrame(rows)
+    dev = select_segment(dataset, "dev", caller=CALLER, horizon=5)
+    dev_results = pd.DataFrame(evaluate_block("DEV 2025-09~2026-06 (report only)", dev, *w3))
+
+    for label, part in list(results.groupby("window", sort=False)) + [(dev_results["window"].iloc[0], dev_results)]:
+        print("\n" + "=" * 124)
+        print(f"{label}   (top_n={TOP_N}, buffer={BUFFER}, real costs)")
+        print("=" * 124)
+        print(f"{'profile':<14}{'lambda':>7}{'net_cum':>10}{'sharpe':>8}{'mdd':>9}{'hit':>7}{'std/5d':>9}"
+              f"{'hold_vol':>10}{'IC':>9}{'corr_m':>8}{'top10∩N':>9}{'entries':>9}")
+        for r in part.itertuples():
+            print(f"{r.profile:<14}{r._3:>7.3f}{r.net_cum:>10.1%}{r.sharpe:>8.2f}{r.mdd:>9.1%}{r.hit_rate:>7.1%}"
+                  f"{r.period_std:>9.2%}{r.hold_vol:>10.4f}{r.ic:>+9.4f}{r.model_corr:>8.2f}"
+                  f"{r.top10_overlap:>9.0%}{r.entries_per_period:>9.2f}")
+
+    w3_neutral = results[(results["window"] == WINDOWS[-1][0]) & (results["profile"] == "neutral")]["net_cum"].iloc[0]
+    match = abs(w3_neutral - EXPECTED_W3_NEUTRAL) < 0.0015
+    print(f"\nCross-check W3 neutral net_cum {w3_neutral:+.1%} vs item 45/47 +65.0% -> {'MATCH' if match else 'MISMATCH'}")
+
+    verdict = decide(results)
+    print("\n" + "=" * 124)
+    print("PRE-REGISTERED DECISION (item 56)")
+    print("=" * 124)
+    piv = {k: results.pivot(index="window", columns="profile", values=k) for k in ("hold_vol", "period_std", "model_corr", "ic")}
+    for p in ("conservative", "aggressive"):
+        hv = [f"{a:.4f}/{b:.4f}" for a, b in zip(piv["hold_vol"][p], piv["hold_vol"]["neutral"])]
+        sd = [f"{a:.2%}/{b:.2%}" for a, b in zip(piv["period_std"][p], piv["period_std"]["neutral"])]
+        print(f"{p}: hold_vol p/neutral {hv} | std p/neutral {sd} | model corr "
+              f"{[round(x, 2) for x in piv['model_corr'][p]]} (>= {MIN_MODEL_CORR}) | IC "
+              f"{[round(x, 4) for x in piv['ic'][p]]} (>= 0) -> {'PASS' if verdict[p] else 'fail'}")
+    print("(conservative also needs std below neutral in every window; aggressive has no std condition)")
+    enabled = ["neutral"] + [p for p, ok in verdict.items() if ok]
+    print(f"=> profiles enabled for recommend.py: {enabled}")
+    if not match:
+        print("WARNING: neutral does not reproduce item 45 -- fix the pipeline before reading the decision.")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    pd.concat([results, dev_results]).to_csv(OUT_DIR / "validation_results.csv", index=False)
+    print(f"\nsaved {OUT_DIR / 'validation_results.csv'}")
 
 
 if __name__ == "__main__":

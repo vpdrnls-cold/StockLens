@@ -38,7 +38,7 @@ def _signals() -> pd.DataFrame:
 
 
 def _top_n(profile: str, n: int = 3) -> pd.DataFrame:
-    scored = personalize_scores(_signals(), profile)
+    scored = personalize_scores(_signals(), profile, lam=None if profile == "neutral" else 1.0)
     return top_n_recommendations(scored, n=n)
 
 
@@ -59,17 +59,16 @@ def test_neutral_profile_has_no_active_contributors() -> None:
     assert "개인화 조정 없음" in explanation.text
 
 
-def test_aggressive_profile_surfaces_momentum_and_volume_contributors() -> None:
+def test_aggressive_profile_surfaces_volatility_and_volume_contributors() -> None:
     top = _top_n("aggressive")
     row = top[top["stock_code"] == "C"].iloc[0]
 
     explanation = explain_recommendation(row)
 
     labels = [label for label, _ in explanation.contributors]
-    assert "모멘텀" in labels
     assert "거래량" in labels
-    # aggressive's risk_weight is 0.0, so no risk penalty line.
-    assert "리스크 페널티" not in labels
+    # item 56: aggressive has no momentum tilt
+    assert "모멘텀" not in labels
 
 
 def test_contributors_sorted_by_magnitude_descending() -> None:
@@ -89,9 +88,9 @@ def test_conservative_profile_surfaces_risk_penalty_for_high_volatility_stock() 
     explanation = explain_recommendation(row)
 
     labels = [label for label, _ in explanation.contributors]
-    assert "리스크 페널티" in labels
-    # It's a penalty, so it must be negative.
-    risk_value = dict(explanation.contributors)["리스크 페널티"]
+    assert "변동성 조정" in labels
+    # It's a penalty for conservative, so it must be negative.
+    risk_value = dict(explanation.contributors)["변동성 조정"]
     assert risk_value < 0
 
 
@@ -103,7 +102,7 @@ def test_text_reports_rank_stock_code_and_predicted_return() -> None:
 
     assert explanation.rank == 1
     assert "A" in explanation.text
-    assert "3.00%" in explanation.text  # predicted_return = 0.03
+    assert "모델 순위 점수 +1.22" in explanation.text  # highest of 3 -> standardized rank +1.22
 
 
 def test_explain_recommendations_preserves_row_order() -> None:

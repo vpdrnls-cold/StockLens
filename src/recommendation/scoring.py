@@ -35,6 +35,7 @@ examples given in AGENTS.md 9 directly:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pandas as pd
@@ -54,22 +55,24 @@ REQUIRED_SIGNAL_COLUMNS = {
 
 @dataclass(frozen=True)
 class RiskProfile:
-    """One named, explainable weighting for the personalization layer.
+    """One named, explainable TILT DIRECTION for the personalization layer (item 56).
 
     personalized_score =
-        predicted_return
-        + momentum_weight * price_to_sma_5
-        + volume_weight * (volume_ratio_20 - 1.0)
-        - risk_weight * volatility_20
+          z(predicted_return)
+        - lam * risk_weight     * z(volatility_20)
+        + lam * momentum_weight * z(price_to_sma_5)
+        + lam * volume_weight   * z(volume_ratio_20)
 
-    ``volume_ratio_20`` is centered at 1.0 (today's volume relative to
-    its 20-day average), so ``volume_ratio_20 - 1.0`` is 0 for
-    "normal" volume and positive for unusually high volume, matching
-    AGENTS.md 9's "consider unusual volume" for aggressive profiles.
+    ``z`` is the per-date standardized cross-sectional rank
+    (``standardized_rank``), so every term is unit-free and on the same
+    scale as the model term. The weights are a DIRECTION (unit norm, from
+    AGENTS.md 9's examples); the STRENGTH ``lam`` is not a free parameter
+    either: ``calibrate_lambda`` picks it on the TRAIN period so that the
+    personalized ranking keeps a mean rank correlation of
+    ``TARGET_MODEL_CORR`` with the model ranking -- personalization tilts
+    the model signal, it does not replace it. No returns are used.
 
-    These starting weights are illustrative, not tuned. Treat any
-    change to them as a design decision requiring a validation-split
-    backtest comparison (AGENTS.md 13), same as feature selection.
+    ``risk_weight`` > 0 penalizes volatility, < 0 rewards it.
     """
 
     name: str
@@ -77,27 +80,26 @@ class RiskProfile:
     momentum_weight: float
     volume_weight: float
 
+    @property
+    def is_neutral(self) -> bool:
+        return self.risk_weight == 0 and self.momentum_weight == 0 and self.volume_weight == 0
 
+
+_INV_SQRT2 = 1.0 / math.sqrt(2.0)
+
+# Pre-registered in item 56 (2026-09-30, before any result). Aggressive has no
+# short-term momentum on purpose: the frozen model is effectively a short-term
+# reversal model (item 49), so a momentum tilt just reverses the model signal
+# (rank corr -0.25 in the item 56 diagnosis). Aggressive = tolerate volatility
+# + unusual volume.
 PROFILES: dict[str, RiskProfile] = {
-    "conservative": RiskProfile(
-        name="conservative",
-        risk_weight=2.0,
-        momentum_weight=0.0,
-        volume_weight=0.0,
-    ),
-    "neutral": RiskProfile(
-        name="neutral",
-        risk_weight=0.0,
-        momentum_weight=0.0,
-        volume_weight=0.0,
-    ),
-    "aggressive": RiskProfile(
-        name="aggressive",
-        risk_weight=0.0,
-        momentum_weight=1.0,
-        volume_weight=0.5,
-    ),
+    "conservative": RiskProfile("conservative", risk_weight=1.0, momentum_weight=0.0, volume_weight=0.0),
+    "neutral": RiskProfile("neutral", risk_weight=0.0, momentum_weight=0.0, volume_weight=0.0),
+    "aggressive": RiskProfile("aggressive", risk_weight=-_INV_SQRT2, momentum_weight=0.0, volume_weight=_INV_SQRT2),
 }
+
+TARGET_MODEL_CORR = 0.8  # item 56, rho*
+LAMBDA_SEARCH_MAX = 20.0
 
 
 def resolve_profile(profile: RiskProfile | str) -> RiskProfile:
@@ -113,19 +115,93 @@ def resolve_profile(profile: RiskProfile | str) -> RiskProfile:
         ) from exc
 
 
+def standardized_rank(df: pd.DataFrame, column: str, date_col: str = "trade_date") -> pd.Series:
+    """Per-date cross-sectional rank (ties averaged), standardized to mean 0 / std 1.
+
+    A date where every value is tied (or a single stock) gets 0.0 for all rows.
+    Uses only that date's cross-section -- never another date's values.
+    """
+    r = df.groupby(date_col)[column].rank(method="average")
+    g = r.groupby(df[date_col])
+    mean, std = g.transform("mean"), g.transform(lambda x: x.std(ddof=0))
+    z = (r - mean) / std
+    return z.where(std > 0, 0.0).fillna(0.0)
+
+
+def _components(signals: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "z_model": standardized_rank(signals, "predicted_return"),
+        "z_vol": standardized_rank(signals, "volatility_20"),
+        "z_mom": standardized_rank(signals, "price_to_sma_5"),
+        "z_volume": standardized_rank(signals, "volume_ratio_20"),
+    }, index=signals.index)
+
+
+def _tilt(comp: pd.DataFrame, p: RiskProfile) -> pd.Series:
+    return -p.risk_weight * comp["z_vol"] + p.momentum_weight * comp["z_mom"] + p.volume_weight * comp["z_volume"]
+
+
+def mean_rank_corr(a: pd.Series, b: pd.Series, dates: pd.Series) -> float:
+    """Mean over dates of the Spearman correlation between ``a`` and ``b`` (NaN dates dropped)."""
+    frame = pd.DataFrame({"d": dates.to_numpy(), "a": a.to_numpy(), "b": b.to_numpy()})
+    frame["ra"] = frame.groupby("d")["a"].rank()
+    frame["rb"] = frame.groupby("d")["b"].rank()
+    corr = frame.groupby("d")[["ra", "rb"]].corr().xs("ra", level=1)["rb"]
+    return float(corr.dropna().mean())
+
+
+def calibrate_lambda(
+    train_signals: pd.DataFrame,
+    profile: RiskProfile | str,
+    target: float = TARGET_MODEL_CORR,
+    *,
+    iterations: int = 40,
+) -> float:
+    """Tilt strength so that mean rank corr(personalized, model) == ``target`` on ``train_signals``.
+
+    Pass TRAIN-period signals only (item 56). Uses no returns or targets.
+    Neutral -> 0.0. The correlation falls from 1 at lam=0 as lam grows, so a
+    bisection on [0, LAMBDA_SEARCH_MAX] is enough.
+    """
+    p = resolve_profile(profile)
+    if p.is_neutral:
+        return 0.0
+    comp = _components(train_signals)
+    tilt = _tilt(comp, p)
+    dates = train_signals["trade_date"]
+
+    def corr_at(lam: float) -> float:
+        return mean_rank_corr(comp["z_model"] + lam * tilt, comp["z_model"], dates)
+
+    lo, hi = 0.0, LAMBDA_SEARCH_MAX
+    if corr_at(hi) > target:
+        raise ValueError(f"target corr {target} not reachable with lambda <= {hi}")
+    for _ in range(iterations):
+        mid = (lo + hi) / 2
+        if corr_at(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    # The rank correlation is a step function of lam; return the largest lam
+    # found whose correlation is still >= target (never over-tilts).
+    return lo
+
+
 def personalize_scores(
     signals: pd.DataFrame,
     profile: RiskProfile | str,
+    lam: float | None = None,
 ) -> pd.DataFrame:
-    """Turn objective model signals into one profile's personalized score.
+    """Turn objective model signals into one profile's personalized score (item 56).
 
     ``signals`` must have one row per (trade_date, stock_code) with at
-    least ``REQUIRED_SIGNAL_COLUMNS``. Returns a copy with an added
-    ``personalized_score`` column plus per-term contribution columns
+    least ``REQUIRED_SIGNAL_COLUMNS``. ``lam`` is required for any
+    non-neutral profile -- take it from ``calibrate_lambda`` on the train
+    period, never pick it by hand. Returns a copy with
+    ``personalized_score`` (unit-free, z scale), the model term
+    ``contribution_model`` and per-term contributions
     (``contribution_risk``, ``contribution_momentum``,
-    ``contribution_volume``) for the explanation layer (AGENTS.md 24)
-    -- every personalized score should be traceable back to which
-    factor moved it, not just a bare number.
+    ``contribution_volume``) for the explanation layer (AGENTS.md 24).
     """
     missing = REQUIRED_SIGNAL_COLUMNS - set(signals.columns)
     if missing:
@@ -135,22 +211,27 @@ def personalize_scores(
         raise ValueError("signals must not be empty.")
 
     resolved = resolve_profile(profile)
+    if resolved.is_neutral:
+        lam = 0.0
+    elif lam is None:
+        raise ValueError("lam is required for a non-neutral profile (use calibrate_lambda on train).")
+    elif lam < 0:
+        raise ValueError("lam must be >= 0")
 
+    comp = _components(signals)
     result = signals.copy()
-    result["contribution_risk"] = -resolved.risk_weight * result["volatility_20"]
-    result["contribution_momentum"] = (
-        resolved.momentum_weight * result["price_to_sma_5"]
-    )
-    result["contribution_volume"] = resolved.volume_weight * (
-        result["volume_ratio_20"] - 1.0
-    )
+    result["contribution_model"] = comp["z_model"]
+    result["contribution_risk"] = -lam * resolved.risk_weight * comp["z_vol"]
+    result["contribution_momentum"] = lam * resolved.momentum_weight * comp["z_mom"]
+    result["contribution_volume"] = lam * resolved.volume_weight * comp["z_volume"]
     result["personalized_score"] = (
-        result["predicted_return"]
+        result["contribution_model"]
         + result["contribution_risk"]
         + result["contribution_momentum"]
         + result["contribution_volume"]
     )
     result["profile"] = resolved.name
+    result["lambda"] = float(lam)
 
     return result
 

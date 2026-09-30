@@ -35,6 +35,7 @@ from src.models.predict import train_model
 from src.portfolio.optimizer import Position, PositionSignal, evaluate_position
 from src.recommendation.scoring import (
     PROFILES,
+    calibrate_lambda,
     add_predicted_return_percentile,
     personalize_scores,
     top_n_recommendations,
@@ -98,9 +99,15 @@ def main() -> None:
     print(f"# 추천 설명 예시 ({last_date.date()}, top 3, 프로필별)")
     print("#" * 70)
 
+    # item 56: tilt strength per profile is calibrated on TRAIN signals only
+    train_signals = splits.train[SIGNAL_COLUMNS].merge(
+        predictions_for_dataset(trained, splits.train),
+        on=["trade_date", "stock_code"], validate="one_to_one",
+    )
     for profile_name in PROFILES:
-        print(f"\n--- {profile_name} ---\n")
-        scored = personalize_scores(day_signals, profile_name)
+        lam = calibrate_lambda(train_signals, profile_name)
+        print(f"\n--- {profile_name} (lambda={lam:.3f}) ---\n")
+        scored = personalize_scores(day_signals, profile_name, lam=lam)
         top3 = top_n_recommendations(scored, n=3)
         print(format_recommendations_report(top3))
 

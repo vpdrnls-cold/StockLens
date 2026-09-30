@@ -22,13 +22,20 @@ file also stores every stock's rank, not only the top 10.
 Not included on purpose
   - The intraday overlay (w=0.5) is still a candidate until the forward check
     (items 49/50) -- daily score only.
-  - The risk-profile re-ranking (src/recommendation/scoring.py) was designed
-    for a model that predicted raw returns; the current model outputs rank-
-    scale scores, so its fixed weights would mix incompatible scales. It needs
-    recalibration before it is shown (item 51, follow-up).
+
+Risk profiles (item 56)
+  --profile conservative | aggressive re-ranks with src/recommendation/scoring.py:
+  z(model) + lambda * profile tilt, lambda calibrated on the frozen model's
+  TRAIN period (mean rank corr with the model ranking = 0.8; no returns used).
+  Both passed the item 56 validation check (direction + signal kept). The
+  default stays neutral (= the model ranking), and ONLY the neutral run writes
+  the paper-trading log reports/daily_picks/<T>.csv -- that log is the record
+  of the pre-registered strategy. Profile runs save to
+  reports/daily_picks_<profile>/ instead.
 
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py --top-n 5 --no-save
+    STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py --profile conservative
 """
 
 from __future__ import annotations
@@ -45,10 +52,32 @@ from src.data.storage import HistoricalStorage
 from src.data.universe import TOP50_UNIVERSE_PATH, load_universe_file
 from src.explanation.model_attribution import explain_pick, shap_contributions
 from src.features.engineering import FEATURE_COLUMNS, build_features
+from src.ml.strategy import predictions_for_dataset
+from src.recommendation.scoring import PROFILES, calibrate_lambda, personalize_scores
 
 KST = timezone(timedelta(hours=9))
 MIN_COVERAGE = 0.9  # latest date must have bars for >= 90% of the universe
 EXPECTED_BEST_ITERATION = 9
+PROFILE_SIGNAL_COLUMNS = ["trade_date", "stock_code", "volatility_20", "price_to_sma_5", "volume_ratio_20"]
+PROFILE_LABELS = {"conservative": "안정형", "neutral": "중립형", "aggressive": "공격형"}
+
+
+def profile_lambda(trained, splits, profile: str) -> float:
+    """Tilt strength from the frozen model's TRAIN rows only (item 56)."""
+    if profile == "neutral":
+        return 0.0
+    train = splits.train[PROFILE_SIGNAL_COLUMNS].copy()
+    train["trade_date"] = pd.to_datetime(train["trade_date"])
+    train = train.merge(predictions_for_dataset(trained, splits.train), on=["trade_date", "stock_code"])
+    return calibrate_lambda(train, profile)
+
+
+def apply_profile(day: pd.DataFrame, profile: str, lam: float) -> pd.DataFrame:
+    """Add personalized_score + contribution columns for one decision date (index = stock_code)."""
+    sig = day.reset_index()[PROFILE_SIGNAL_COLUMNS].assign(predicted_return=day["score"].to_numpy())
+    scored = personalize_scores(sig, profile, lam=lam if profile != "neutral" else None).set_index("stock_code")
+    cols = ["personalized_score", "contribution_model", "contribution_risk", "contribution_volume"]
+    return day.join(scored[cols])
 
 
 def stock_names() -> dict[str, str]:
@@ -114,9 +143,11 @@ def main() -> None:
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (default: latest date with enough bars)")
     ap.add_argument("--out", default="reports/daily_picks")
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--profile", choices=sorted(PROFILES), default="neutral",
+                    help="투자성향 재랭킹 (기본 neutral = 모델 순위 그대로, 항목 56)")
     args = ap.parse_args()
 
-    trained, _ = train_frozen_model(_load_priced_dataset())
+    trained, splits = train_frozen_model(_load_priced_dataset())
     if trained.best_iteration != EXPECTED_BEST_ITERATION:
         print(f"주의: 고정 모델 best_iteration={trained.best_iteration} (기대값 {EXPECTED_BEST_ITERATION}). "
               "학습 데이터나 코드가 바뀌었는지 확인하세요.")
@@ -132,8 +163,11 @@ def main() -> None:
     # over stocks in ascending code order, i.e. ties go to the lower stock code.
     # The depth-2, 9-round model yields only ~8 distinct scores a day, so ties
     # are common (item 51) -- the rule must match what was backtested.
-    day["rank"] = rank_like_engine(day["score"])
-    day["tie_size"] = day.groupby(day["score"].round(9))["score"].transform("size").astype(int)
+    lam = profile_lambda(trained, splits, args.profile)
+    day = apply_profile(day, args.profile, lam)
+    rank_col = "score" if args.profile == "neutral" else "personalized_score"
+    day["rank"] = rank_like_engine(day[rank_col])
+    day["tie_size"] = day.groupby(day[rank_col].round(9))[rank_col].transform("size").astype(int)
     day["percentile"] = day["score"].rank(pct=True)
     contribs = shap_contributions(trained, day)
     gap = float((contribs.sum(axis=1) - day["score"]).abs().max())
@@ -148,6 +182,8 @@ def main() -> None:
     print("=" * 78)
     print(f"StockLens 추천 — 판단일 {date.date()} 종가 기준, 다음 거래일 시가 진입 · 5거래일 보유")
     print(f"고정 daily 모델(best_iteration={trained.best_iteration}), {n}종목 중 상위 {len(picks)}")
+    print(f"투자성향: {PROFILE_LABELS[args.profile]}({args.profile})"
+          + ("" if args.profile == "neutral" else f", 성향 반영 강도 λ={lam:.3f} (모델 순위와의 상관 0.8 유지)"))
     print("=" * 78)
     if warn:
         print(warn + "\n")
@@ -159,6 +195,10 @@ def main() -> None:
             percentile=float(r["percentile"]), n_stocks=n, features=r[cols], contributions=contribs.loc[code],
         )
         text = exp.text
+        if args.profile != "neutral":
+            text += (f"\n  · 성향 반영: 모델 순위 점수 {r['contribution_model']:+.2f}, "
+                     f"변동성 조정 {r['contribution_risk']:+.2f}, 거래량 {r['contribution_volume']:+.2f} "
+                     f"→ 최종 {r['personalized_score']:+.2f} (그날 종목 간 표준화 값)")
         if int(r["tie_size"]) > 1:
             text += (f"\n  · 같은 점수 {int(r['tie_size'])}종목 — 백테스트와 같은 규칙"
                      "(종목코드 오름차순)으로 순위를 정함")
@@ -169,18 +209,22 @@ def main() -> None:
             "trade_date": date.date(), "rank": int(r["rank"]), "stock_code": code,
             "name": names.get(code, code), "score": float(r["score"]), "tie_size": int(r["tie_size"]),
             "top_drivers": ";".join(f"{f}:{contribs.loc[code, f]:+.4f}" for f in top3),
+            "profile": args.profile, "personalized_score": float(r["personalized_score"]),
         })
 
+    if args.profile != "neutral":
+        print("성향 반영 순위는 모델 점수에 투자성향(변동성·거래량) 기울기를 더한 것입니다. 항목 56 validation에서 "
+              "의도한 방향으로 작동하고 모델 신호를 유지하는 것만 확인했고, 수익 개선을 뜻하지 않습니다.")
     print("읽는 법: 랭킹 점수는 '5일 뒤 수익률 순위'에 대한 모델의 상대 점수입니다(예상 수익률 % 아님).")
     print("각 줄은 그 종목 점수를 가장 크게 움직인 feature와 실제 값, 기여 크기(TreeSHAP)입니다.")
-    n_tied = int((day["score"].round(9) >= round(float(picks["score"].min()), 9)).sum())
+    n_tied = int((day[rank_col].round(9) >= round(float(picks[rank_col].min()), 9)).sum())
     if n_tied > len(picks):
         print(f"동점 주의: {len(picks)}위 점수 이상인 종목이 {n_tied}개입니다. 모델 점수 종류가 적어서 "
               "상위권 일부는 동점 처리 규칙으로 정해집니다.")
     print("검증 상태: 이 모델의 표본 밖 성과 확인은 2027년 1월 forward 평가 전까지 미완료입니다. 투자 권유가 아닙니다.")
 
     if not args.no_save:
-        out = Path(args.out)
+        out = Path(args.out if args.profile == "neutral" else f"{args.out}_{args.profile}")
         out.mkdir(parents=True, exist_ok=True)
         path = out / f"{date:%Y%m%d}.csv"
         pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
