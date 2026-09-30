@@ -49,7 +49,7 @@ def ask_yes_no(prompt: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--answers", help="쉼표로 구분한 1부터 시작하는 선택 번호 6개 (비대화형)")
-    ap.add_argument("--acknowledge-warning", action="store_true", help="비대화형에서 Q3 10% 경고에 '예'")
+    ap.add_argument("--acknowledge-warning", action="store_true", help="비대화형에서 Q3 10%% 경고에 '예'")
     ap.add_argument("--out", default=str(DEFAULT_PROFILE_PATH))
     ap.add_argument("--no-save", action="store_true")
     args = ap.parse_args()
