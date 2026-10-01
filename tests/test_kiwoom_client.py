@@ -722,3 +722,104 @@ def test_minute_chart_history_rejects_malformed_stop_date() -> None:
 
     with pytest.raises(ValueError, match="stop_date"):
         client.get_minute_chart_history("005930", "20260922", stop_date="2026-09-01")
+
+def _token_response() -> FakeResponse:
+    return FakeResponse(
+        {
+            "token": "access-token",
+            "token_type": "bearer",
+            "expires_dt": "20991231235959",
+            "return_code": 0,
+        }
+    )
+
+
+def test_index_daily_chart_page_returns_headers_and_passes_continuation() -> None:
+    session = FakeSession(
+        [
+            _token_response(),
+            FakeResponse(
+                {"inds_cd": "001", "inds_dt_pole_qry": [{"dt": "20260930"}], "return_code": 0},
+                headers={"cont-yn": "Y", "next-key": "page-2-key"},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    response, response_headers = client.get_index_daily_chart_page(
+        "001", "20260930", cont_yn="Y", next_key="prev-key"
+    )
+
+    assert response["inds_dt_pole_qry"][0]["dt"] == "20260930"
+    assert response_headers["next-key"] == "page-2-key"
+    assert session.calls[1]["headers"]["api-id"] == "ka20006"
+    assert session.calls[1]["headers"]["cont-yn"] == "Y"
+    assert session.calls[1]["headers"]["next-key"] == "prev-key"
+    assert session.calls[1]["json"] == {"inds_cd": "001", "base_dt": "20260930"}
+    # single page only -- no automatic continuation request.
+    assert len(session.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("api_id", "path", "rows_key"),
+    [
+        ("ka10059", "/api/dostk/stkinfo", "stk_invsr_orgn"),
+        ("ka10060", "/api/dostk/chart", "stk_invsr_orgn_chart"),
+    ],
+)
+def test_investor_flow_page_uses_documented_request_fields(
+    api_id: str, path: str, rows_key: str
+) -> None:
+    session = FakeSession(
+        [
+            _token_response(),
+            FakeResponse(
+                {rows_key: [{"dt": "20260930", "frgnr_invsr": "-61779"}], "return_code": 0},
+                headers={"cont-yn": "Y", "next-key": "page-2-key"},
+            ),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    response, response_headers = client.get_investor_flow_page(
+        "005930", "20260930", api_id=api_id
+    )
+
+    assert response[rows_key][0]["frgnr_invsr"] == "-61779"
+    assert response_headers["cont-yn"] == "Y"
+    assert session.calls[1]["url"].endswith(path)
+    assert session.calls[1]["headers"]["api-id"] == api_id
+    assert session.calls[1]["headers"]["cont-yn"] == "N"
+    assert session.calls[1]["json"] == {
+        "dt": "20260930",
+        "stk_cd": "005930",
+        "amt_qty_tp": "1",
+        "trde_tp": "0",
+        "unit_tp": "1000",
+    }
+    assert len(session.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"api_id": "ka10061"}, "api_id"),
+        ({"amount_quantity_type": "3"}, "amount_quantity_type"),
+        ({"trade_type": "9"}, "trade_type"),
+        ({"unit_type": "10"}, "unit_type"),
+    ],
+)
+def test_investor_flow_page_rejects_undocumented_values(
+    kwargs: dict[str, str], match: str
+) -> None:
+    client = KiwoomClient(_settings(), session=FakeSession([]))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match=match):
+        client.get_investor_flow_page("005930", "20260930", **kwargs)
+
+
+def test_investor_flow_page_rejects_malformed_date() -> None:
+    client = KiwoomClient(_settings(), session=FakeSession([]))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="date"):
+        client.get_investor_flow_page("005930", "2026-09-30")

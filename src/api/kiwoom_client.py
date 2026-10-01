@@ -556,27 +556,41 @@ class KiwoomClient:
 
         ``base_date`` must use the ``YYYYMMDD`` format documented by Kiwoom.
         """
+        response, _headers = self.get_index_daily_chart_page(inds_cd, base_date)
+        return response
+
+    def get_index_daily_chart_page(
+        self,
+        inds_cd: str,
+        base_date: str,
+        *,
+        cont_yn: str = "N",
+        next_key: str = "",
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+        """Return one raw ``ka20006`` page and its response headers.
+
+        Single-page and low-level; ``get_index_daily_history`` follows
+        continuation. Index prices are documented as 100x integers
+        (decimal point removed) -- see ``normalize_ka20006_response``.
+        """
         normalized_code = inds_cd.strip()
         if not normalized_code:
             raise ValueError("inds_cd must not be empty.")
-
         try:
             datetime.strptime(base_date, "%Y%m%d")
         except ValueError as error:
             raise ValueError("base_date must use YYYYMMDD format.") from error
 
         token = self.authenticate()
-
         headers = self._json_headers(
             **{
                 "api-id": "ka20006",
                 "authorization": f"Bearer {token.value}",
-                "cont-yn": "N",
-                "next-key": "",
+                "cont-yn": cont_yn,
+                "next-key": next_key,
             }
         )
-
-        response, _headers = self._post(
+        return self._post(
             self._DAILY_CHART_PATH,
             {
                 "inds_cd": normalized_code,
@@ -585,7 +599,173 @@ class KiwoomClient:
             headers,
             stage="index_daily_chart",
         )
-        return response
+
+    # ka10059 (종목별투자자기관별) and ka10060 (종목별투자자기관별차트)
+    # take identical request fields but live on different paths and
+    # return their rows under different keys.
+    _INVESTOR_FLOW_ENDPOINTS = {
+        "ka10059": ("/api/dostk/stkinfo", "stk_invsr_orgn"),
+        "ka10060": ("/api/dostk/chart", "stk_invsr_orgn_chart"),
+    }
+
+    def get_investor_flow_page(
+        self,
+        stock_code: str,
+        date: str,
+        *,
+        api_id: str = "ka10060",
+        amount_quantity_type: str = "1",
+        trade_type: str = "0",
+        unit_type: str = "1000",
+        cont_yn: str = "N",
+        next_key: str = "",
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+        """Return one raw investor/institution flow page and its headers.
+
+        ``api_id`` is ``ka10059`` or ``ka10060``. Documented request
+        values: ``amt_qty_tp`` ``1`` amount (백만원) / ``2`` quantity,
+        ``trde_tp`` ``0`` net buy / ``1`` buy / ``2`` sell, ``unit_tp``
+        ``1000`` thousand shares / ``1`` single shares (quantity only).
+
+        Single-page and low-level; ``get_investor_flow_history`` follows
+        continuation. A row for the current trading day is provisional
+        (가집계) during the session -- see ``normalize_ka10059_response``.
+        """
+        if api_id not in self._INVESTOR_FLOW_ENDPOINTS:
+            raise ValueError(
+                f"api_id must be one of {sorted(self._INVESTOR_FLOW_ENDPOINTS)}."
+            )
+        normalized_code = stock_code.strip()
+        if not normalized_code:
+            raise ValueError("stock_code must not be empty.")
+        try:
+            datetime.strptime(date, "%Y%m%d")
+        except ValueError as error:
+            raise ValueError("date must use YYYYMMDD format.") from error
+        if amount_quantity_type not in {"1", "2"}:
+            raise ValueError("amount_quantity_type must be '1' or '2'.")
+        if trade_type not in {"0", "1", "2"}:
+            raise ValueError("trade_type must be '0', '1', or '2'.")
+        if unit_type not in {"1000", "1"}:
+            raise ValueError("unit_type must be '1000' or '1'.")
+
+        path, _rows_key = self._INVESTOR_FLOW_ENDPOINTS[api_id]
+        token = self.authenticate()
+        headers = self._json_headers(
+            **{
+                "api-id": api_id,
+                "authorization": f"Bearer {token.value}",
+                "cont-yn": cont_yn,
+                "next-key": next_key,
+            }
+        )
+        return self._post(
+            path,
+            {
+                "dt": date,
+                "stk_cd": normalized_code,
+                "amt_qty_tp": amount_quantity_type,
+                "trde_tp": trade_type,
+                "unit_tp": unit_type,
+            },
+            headers,
+            stage="investor_flow",
+        )
+
+    def get_index_daily_history(
+        self,
+        inds_cd: str,
+        base_date: str,
+        *,
+        stop_date: str | None = None,
+        max_pages: int = 40,
+    ) -> Mapping[str, Any]:
+        """Return merged ``ka20006`` pages walking back from ``base_date``.
+
+        Confirmed live (2026-10-01): 600 rows per page, continuation walks
+        back in time, full KOSPI history (1985~) ends after 19 pages.
+        Paging stops early once a page reaches ``stop_date`` (YYYYMMDD),
+        so an incremental update needs one page.
+        """
+        rows = self._collect_dated_pages(
+            lambda cont_yn, next_key: self.get_index_daily_chart_page(
+                inds_cd, base_date, cont_yn=cont_yn, next_key=next_key
+            ),
+            "inds_dt_pole_qry",
+            stop_date=stop_date,
+            max_pages=max_pages,
+            label=f"index_daily inds_cd={inds_cd}",
+        )
+        return {"inds_cd": inds_cd.strip(), "inds_dt_pole_qry": rows}
+
+    def get_investor_flow_history(
+        self,
+        stock_code: str,
+        date: str,
+        *,
+        stop_date: str | None = None,
+        max_pages: int = 80,
+    ) -> Mapping[str, Any]:
+        """Return merged ``ka10059`` amount-mode net-buy pages walking back from ``date``.
+
+        Confirmed live (2026-10-01): 100 rows per page, continuation walks
+        back in time; 40 pages reached 2010-06-30 for 005930 with more
+        still available. ``ka10059`` rather than ``ka10060``: same flow
+        values, but ka10060's ``acc_trde_prica`` actually carries volume.
+        """
+        rows = self._collect_dated_pages(
+            lambda cont_yn, next_key: self.get_investor_flow_page(
+                stock_code, date, api_id="ka10059", cont_yn=cont_yn, next_key=next_key
+            ),
+            "stk_invsr_orgn",
+            stop_date=stop_date,
+            max_pages=max_pages,
+            label=f"investor_flow stock={stock_code}",
+        )
+        return {"stk_cd": stock_code.strip(), "stk_invsr_orgn": rows}
+
+    def _collect_dated_pages(
+        self,
+        fetch_page: Any,
+        rows_key: str,
+        *,
+        stop_date: str | None,
+        max_pages: int,
+        label: str,
+    ) -> list[Any]:
+        if stop_date is not None:
+            try:
+                datetime.strptime(stop_date, "%Y%m%d")
+            except ValueError as error:
+                raise ValueError("stop_date must use YYYYMMDD format.") from error
+        if max_pages <= 0:
+            raise ValueError("max_pages must be positive.")
+
+        all_rows: list[Any] = []
+        cont_yn, next_key = "N", ""
+        for page in range(max_pages):
+            if page > 0:
+                time.sleep(self._PAGE_REQUEST_INTERVAL_SECONDS)
+            response, response_headers = fetch_page(cont_yn, next_key)
+            rows = response.get(rows_key, [])
+            if not isinstance(rows, list):
+                raise KiwoomTransportError(f"{rows_key} must be a list.")
+            all_rows.extend(rows)
+
+            cont_yn = str(response_headers.get("cont-yn", "N")).strip().upper()
+            next_key = str(response_headers.get("next-key", "")).strip()
+            dates = [str(row.get("dt", "")) for row in rows if isinstance(row, Mapping)]
+            reached_stop = stop_date is not None and bool(dates) and min(dates) <= stop_date
+            if cont_yn != "Y" or not next_key or not rows or reached_stop:
+                break
+        else:
+            logger.warning(
+                "Kiwoom %s stopped at max_pages=%d with continuation still "
+                "available -- history may be incomplete.",
+                label,
+                max_pages,
+            )
+        return all_rows
 
     def _json_headers(self, **headers: str) -> dict[str, str]:
         return {"Content-Type": self._JSON_CONTENT_TYPE, **headers}

@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
 from src.api.kiwoom_client import KiwoomClient, KiwoomClientError
-from src.data.normalization import HistoricalDataValidationError, normalize_ka10081_response
+from src.data.normalization import (
+    HistoricalDataValidationError,
+    normalize_ka10059_response,
+    normalize_ka10081_response,
+    normalize_ka20006_response,
+)
 from src.data.storage import HistoricalStorage, HistoricalStorageError
 
 
@@ -124,4 +130,93 @@ def ingest_kiwoom_daily_chart_batch(
             results.append(BatchIngestionItemResult(stock_code=stock_code, error=str(error)))
         else:
             results.append(BatchIngestionItemResult(stock_code=stock_code, ingestion=ingestion))
+    return results
+
+
+@dataclass(frozen=True)
+class DatedSeriesIngestionResult:
+    """Outcome of one index or investor-flow ingestion run."""
+
+    code: str
+    raw_path: Path | None = None
+    normalized_path: Path | None = None
+    row_count: int = 0
+    incomplete_dates: tuple[str, ...] = ()
+    error: str | None = None
+
+    @property
+    def success(self) -> bool:
+        return self.error is None
+
+
+def ingest_kiwoom_index_daily(
+    client: KiwoomClient,
+    index_code: str,
+    base_date: str,
+    *,
+    stop_date: str | None = None,
+    storage: HistoricalStorage | None = None,
+    retrieved_at: datetime | None = None,
+) -> DatedSeriesIngestionResult:
+    """Fetch, preserve, normalize, validate, and merge-store ``ka20006`` index bars."""
+    retrieved_at = retrieved_at or datetime.now(timezone.utc)
+    historical_storage = storage or HistoricalStorage()
+    response = client.get_index_daily_history(index_code, base_date, stop_date=stop_date)
+    raw_path = historical_storage.save_raw_kiwoom(
+        "ka20006", index_code, response, retrieved_at=retrieved_at
+    )
+    bars = normalize_ka20006_response(response, retrieved_at=retrieved_at)
+    normalized_path = historical_storage.save_index_bars(index_code, bars)
+    return DatedSeriesIngestionResult(
+        code=index_code,
+        raw_path=raw_path,
+        normalized_path=normalized_path,
+        row_count=len(bars),
+        incomplete_dates=tuple(b.trade_date.isoformat() for b in bars if not b.is_complete),
+    )
+
+
+def ingest_kiwoom_investor_flow_batch(
+    client: KiwoomClient,
+    stock_codes: Sequence[str],
+    date: str,
+    *,
+    stop_date: str | None = None,
+    storage: HistoricalStorage | None = None,
+) -> list[DatedSeriesIngestionResult]:
+    """Sequentially ingest ``ka10059`` flows; one stock's failure does not stop the rest."""
+    historical_storage = storage or HistoricalStorage()
+    results: list[DatedSeriesIngestionResult] = []
+    for stock_code in stock_codes:
+        retrieved_at = datetime.now(timezone.utc)
+        try:
+            response = client.get_investor_flow_history(
+                stock_code, date, stop_date=stop_date
+            )
+            raw_path = historical_storage.save_raw_kiwoom(
+                "ka10059", stock_code, response, retrieved_at=retrieved_at
+            )
+            days = normalize_ka10059_response(
+                response, stock_code=stock_code, retrieved_at=retrieved_at
+            )
+            normalized_path = historical_storage.save_investor_flows(stock_code, days)
+        except (
+            KiwoomClientError,
+            HistoricalDataValidationError,
+            HistoricalStorageError,
+            ValueError,
+        ) as error:
+            results.append(DatedSeriesIngestionResult(code=stock_code, error=str(error)))
+            continue
+        results.append(
+            DatedSeriesIngestionResult(
+                code=stock_code,
+                raw_path=raw_path,
+                normalized_path=normalized_path,
+                row_count=len(days),
+                incomplete_dates=tuple(
+                    d.trade_date.isoformat() for d in days if not d.is_complete
+                ),
+            )
+        )
     return results

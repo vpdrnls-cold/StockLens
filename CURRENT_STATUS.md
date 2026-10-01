@@ -931,3 +931,16 @@ forward 평가 스크립트·판정 규칙·후속 행동 → 사전 고정 완�
 - **바꾸지 않은 것**: `recommend.py` 기본값은 neutral, 야간 페이퍼 트레이딩 기록도 그대로 neutral.
 - **테스트**: `tests/test_survey.py` 11개(상수 고정, 추천 불가 조건 3개, 10% 경고·상한, min 규칙, 경계값, 경험 조건, 입력 검증, 저장·로드·버전, 설명 문구).
 - **다음 단계**: 대기 기간 남은 과제 — 분기 D 대비 뉴스·매크로·수급 데이터 소스 조사. 설문 경계값은 실제 사용자 응답·만족도가 쌓이면 재검토(그 전에는 바꾸지 않음).
+
+58. **KOSPI 지수(ka20006) + 종목별 투자자 수급(ka10059) 수집·정규화·저장 구현 (2026-10-01, forward 대기 기간 데이터 확장 1단계) — 실험 아님, feature/모델 반영 없음**
+
+- **목적**: 분기 D(항목 53) 대비 + 리스크 레이어의 시장 대용 지수(항목 55, 생존편향 있는 유니버스 동일가중)를 실제 지수로 바꿀 수 있게. forward·test 구간을 읽지 않고, 운용 경로·사전등록 판정은 바꾸지 않음. 이 데이터를 쓰는 실험은 별도 사전등록 후 W1~W3에서만, 표본 밖 확인은 forward2.
+- **실제 응답 확인** (`scripts/check_kiwoom_flow_index.py`, 2026-10-01 13:18 장중, raw는 `data/raw/kiwoom/probe_flow_index/`):
+  - ka20006: 600행/페이지, 연속조회는 과거 방향, KOSPI(001) 1985-01-04~ 10,940일·19페이지에서 종료. 지수 값은 스펙대로 100배 정수. 2000년 이전 OHLC 불일치 봉 9개(1989~1996) — 일봉과 같은 규칙으로 경고 후 제외.
+  - ka10059/ka10060: 100행/페이지, 과거 방향, 40페이지로 2010-06-30까지(아직 더 있음, W1 2012~ 충분). 두 API의 수급 값은 3,999일 전부 동일하나 **ka10060의 `acc_trde_prica`는 실제로 거래량**(ka10059 `acc_trde_qty`와 3,999일 일치) → ka10059 채택.
+  - **항등식**: 개인 + 외국인 + 기관 세부 8개 + 기타법인 + 내외국인 = 0 이 과거 전 일자에서 반올림 오차(최대 ±4백만원) 내 성립. 장중 당일 행은 +68,419로 불일치(개인·금융투자·사모 0) → 가집계 판별 규칙으로 사용.
+  - **`orgn`(기관계) 정의 단절**: 2010~2012년 509일은 기관계에서 국가가 빠져 있음(509일 전부 이 설명으로 정확히 일치), 이후는 포함. feature에는 세부 8개 합(`institution_total`)을 쓰고 `orgn`은 `institution_reported`로 보존만.
+- **구현**: `KiwoomClient.get_index_daily_chart_page/get_index_daily_history`, `get_investor_flow_page/get_investor_flow_history`(연속조회 + `stop_date`로 증분 수집), `IndexDailyBar`/`InvestorFlowDay`(내부 필드명), `normalize_ka20006_response`/`normalize_ka10059_response`, `HistoricalStorage.save_raw_kiwoom` + `processed/index/<code>.json`·`processed/investor_flow/<code>.json`(날짜별 병합), `scripts/ingest_kiwoom_flow_index.py`(기본 지수 001·201 + 유니버스, `--lookback-days`로 증분).
+- **미완성 행 처리**: 행마다 `retrieved_at`과 `is_complete` 저장. 당일 행은 `SESSION_FINAL_TIME_KST`(18:00, **임시 보수값**) 이후 수집분만 완성, 수급은 추가로 항등식 통과 필요. 미완성 행은 버리지 않고 저장하되 기본 loader에서 제외, 나중 수집의 완성 값이 대체(완성 값을 미완성 값이 덮어쓰지 않음).
+- **미결**: (1) 당일 수급·지수가 언제 확정되는지 — 2026-10-01 18시 이후와 10-02 아침에 probe 재실행해 10/01 행 비교 후 `SESSION_FINAL_TIME_KST` 확정. 판단 시점 A에 당일 수급을 쓸 수 있는지가 여기서 결정됨. (2) ka20006 `trde_qty` 단위(스펙은 1주, 값 크기는 천주로 보임) 미확인 — feature에 쓰기 전 확인. (3) 전체 이력 수집(80페이지 상한)과 `nightly_ingest.sh` 연결은 (1) 확인 후.
+- **테스트**: `tests/test_flow_index_data.py` 24개(완성 판정·KST, 100배 복원, legacy 봉, 필드 매핑, 기관 정의 단절, 항등식·허용오차, 저장 병합 규칙, 연속조회·stop_date, 배치 실패 격리), `tests/test_kiwoom_client.py` 6개 추가, 전체 290개 통과.

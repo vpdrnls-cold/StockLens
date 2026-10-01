@@ -9,7 +9,12 @@ import re
 from typing import Any, Mapping, Sequence
 from decimal import Decimal
 
-from src.data.models import DailyBar
+from src.data.models import (
+    INVESTOR_CATEGORIES,
+    DailyBar,
+    IndexDailyBar,
+    InvestorFlowDay,
+)
 
 
 class HistoricalStorageError(RuntimeError):
@@ -134,6 +139,121 @@ class HistoricalStorage:
                 ) from error
 
         return bars
+
+
+    def save_raw_kiwoom(
+        self,
+        api_id: str,
+        code: str,
+        response: Mapping[str, Any],
+        *,
+        retrieved_at: datetime,
+    ) -> Path:
+        """Store an unmodified provider response under ``raw/kiwoom/<api_id>/<code>/``."""
+        safe_api_id = _safe_stock_code(api_id)
+        safe_code = _safe_stock_code(code)
+        timestamp = retrieved_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        path = self._data_root / "raw" / "kiwoom" / safe_api_id / safe_code / f"{timestamp}.json"
+        _write_json(path, dict(response))
+        return path
+
+    def save_index_bars(self, index_code: str, bars: Sequence[IndexDailyBar]) -> Path:
+        """Merge index bars by date into ``processed/index/<code>.json``."""
+        if any(bar.index_code != index_code for bar in bars):
+            raise HistoricalStorageError("All bars must belong to the requested index code.")
+        path = self._index_path(index_code)
+        _merge_by_date(path, [bar.to_dict() for bar in bars])
+        return path
+
+    def load_index_bars(
+        self, index_code: str, *, include_incomplete: bool = False
+    ) -> list[IndexDailyBar]:
+        """Load index bars; in-progress bars are excluded unless asked for."""
+        path = self._index_path(index_code)
+        bars: list[IndexDailyBar] = []
+        for record in _read_json_list(path):
+            try:
+                bar = IndexDailyBar(
+                    index_code=str(record["index_code"]),
+                    trade_date=date.fromisoformat(str(record["trade_date"])),
+                    open_price=Decimal(str(record["open_price"])),
+                    high_price=Decimal(str(record["high_price"])),
+                    low_price=Decimal(str(record["low_price"])),
+                    close_price=Decimal(str(record["close_price"])),
+                    volume=int(record["volume"]),
+                    trade_value_million_krw=int(record["trade_value_million_krw"]),
+                    retrieved_at=datetime.fromisoformat(str(record["retrieved_at"])),
+                    is_complete=_parse_bool(record["is_complete"]),
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise HistoricalStorageError(f"Invalid index bar in {path}.") from error
+            if include_incomplete or bar.is_complete:
+                bars.append(bar)
+        return bars
+
+    def save_investor_flows(
+        self, stock_code: str, days: Sequence[InvestorFlowDay]
+    ) -> Path:
+        """Merge investor-flow days by date into ``processed/investor_flow/<code>.json``."""
+        if any(day.stock_code != stock_code for day in days):
+            raise HistoricalStorageError("All flows must belong to the requested stock code.")
+        path = self._investor_flow_path(stock_code)
+        _merge_by_date(path, [day.to_dict() for day in days])
+        return path
+
+    def load_investor_flows(
+        self, stock_code: str, *, include_incomplete: bool = False
+    ) -> list[InvestorFlowDay]:
+        """Load investor flows; provisional/unbalanced days are excluded unless asked for."""
+        path = self._investor_flow_path(stock_code)
+        days: list[InvestorFlowDay] = []
+        for record in _read_json_list(path):
+            try:
+                day = InvestorFlowDay(
+                    stock_code=str(record["stock_code"]),
+                    trade_date=date.fromisoformat(str(record["trade_date"])),
+                    volume=int(record["volume"]),
+                    trade_value_million_krw=int(record["trade_value_million_krw"]),
+                    institution_reported=int(record["institution_reported"]),
+                    retrieved_at=datetime.fromisoformat(str(record["retrieved_at"])),
+                    is_complete=_parse_bool(record["is_complete"]),
+                    **{name: int(record[name]) for name in INVESTOR_CATEGORIES},
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise HistoricalStorageError(f"Invalid investor flow in {path}.") from error
+            if include_incomplete or day.is_complete:
+                days.append(day)
+        return days
+
+    def _index_path(self, index_code: str) -> Path:
+        return self._data_root / "processed" / "index" / f"{_safe_stock_code(index_code)}.json"
+
+    def _investor_flow_path(self, stock_code: str) -> Path:
+        return (
+            self._data_root
+            / "processed"
+            / "investor_flow"
+            / f"{_safe_stock_code(stock_code)}.json"
+        )
+
+
+def _merge_by_date(path: Path, new_records: Sequence[dict[str, Any]]) -> None:
+    """Merge records keyed by ``trade_date``; a later fetch replaces an earlier one,
+    except that an incomplete record never overwrites a complete one (a
+    provisional re-fetch must not erase a final value)."""
+    records_by_date = {record["trade_date"]: record for record in _read_json_list(path)}
+    for record in new_records:
+        existing = records_by_date.get(record["trade_date"])
+        if existing is not None and existing.get("is_complete") is True and not record["is_complete"]:
+            continue
+        records_by_date[record["trade_date"]] = record
+    _write_json(path, [records_by_date[key] for key in sorted(records_by_date)])
+
+
+def _parse_bool(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"Expected a boolean, received {value!r}.")
+    return value
 
 
 def _safe_stock_code(stock_code: str) -> str:
