@@ -73,24 +73,28 @@ def main() -> int:
             HistoricalStorageError,
             ValueError,
         ) as error:
-            print(f"index {index_code} → 실패 / {error}")
+            print(f"index {index_code} → 실패 / {error}", flush=True)
             failures += 1
             continue
         print(
             f"index {index_code} → 성공 / {result.row_count} bars"
-            + (f" / incomplete {list(result.incomplete_dates)}" if result.incomplete_dates else "")
+            + (f" / incomplete {list(result.incomplete_dates)}" if result.incomplete_dates else ""),
+            flush=True,
         )
 
     if not args.skip_flows:
-        results = ingest_kiwoom_investor_flow_batch(
-            client, args.stock_codes, args.base_date, stop_date=stop_date
-        )
-        for result in results:
+        def _progress(done: int, total: int, result) -> None:
+            head = f"[{done}/{total}] flow {result.code}"
             if not result.success:
-                print(f"flow {result.code} → 실패 / {result.error}")
-                failures += 1
-            elif result.incomplete_dates:
-                print(f"flow {result.code} → {result.row_count} days / incomplete {list(result.incomplete_dates)}")
+                print(f"{head} → 실패 / {result.error}", flush=True)
+            else:
+                tail = f" / incomplete {list(result.incomplete_dates)}" if result.incomplete_dates else ""
+                print(f"{head} → {result.row_count} days{tail}", flush=True)
+
+        results = ingest_kiwoom_investor_flow_batch(
+            client, args.stock_codes, args.base_date, stop_date=stop_date, on_result=_progress
+        )
+        failures += sum(not result.success for result in results)
         ok = sum(result.success for result in results)
         print(f"flow_summary={ok}/{len(results)} successful")
 

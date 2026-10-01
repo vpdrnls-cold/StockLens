@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from src.api.kiwoom_client import KiwoomClient, KiwoomClientError
 from src.data.normalization import (
@@ -183,8 +183,13 @@ def ingest_kiwoom_investor_flow_batch(
     *,
     stop_date: str | None = None,
     storage: HistoricalStorage | None = None,
+    on_result: Callable[[int, int, DatedSeriesIngestionResult], None] | None = None,
 ) -> list[DatedSeriesIngestionResult]:
-    """Sequentially ingest ``ka10059`` flows; one stock's failure does not stop the rest."""
+    """Sequentially ingest ``ka10059`` flows; one stock's failure does not stop the rest.
+
+    ``on_result(done, total, result)`` is called after each stock (progress
+    output for long full-history runs); it does not change what is stored.
+    """
     historical_storage = storage or HistoricalStorage()
     results: list[DatedSeriesIngestionResult] = []
     for stock_code in stock_codes:
@@ -207,6 +212,8 @@ def ingest_kiwoom_investor_flow_batch(
             ValueError,
         ) as error:
             results.append(DatedSeriesIngestionResult(code=stock_code, error=str(error)))
+            if on_result is not None:
+                on_result(len(results), len(stock_codes), results[-1])
             continue
         results.append(
             DatedSeriesIngestionResult(
@@ -219,4 +226,6 @@ def ingest_kiwoom_investor_flow_batch(
                 ),
             )
         )
+        if on_result is not None:
+            on_result(len(results), len(stock_codes), results[-1])
     return results

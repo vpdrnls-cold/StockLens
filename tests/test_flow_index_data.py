@@ -397,3 +397,23 @@ def test_flow_batch_continues_after_one_stock_fails(tmp_path: Path) -> None:
     assert [r.success for r in results] == [False, True]
     assert results[1].row_count == 1
     assert len(HistoricalStorage(tmp_path).load_investor_flows("005930")) == 1
+
+
+def test_flow_batch_reports_progress_per_stock(tmp_path: Path) -> None:
+    class _Client:
+        def get_investor_flow_history(self, stock_code: str, date: str, *, stop_date: Any) -> Any:
+            if stock_code == "000660":
+                raise KiwoomAPIError("boom", return_code=1)
+            return {"stk_cd": stock_code, "stk_invsr_orgn": [_flow_row("20260929")]}
+
+    seen: list[tuple[int, int, str, bool]] = []
+    results = ingest_kiwoom_investor_flow_batch(
+        _Client(),  # type: ignore[arg-type]
+        ["000660", "005930"],
+        "20260930",
+        storage=HistoricalStorage(tmp_path),
+        on_result=lambda done, total, r: seen.append((done, total, r.code, r.success)),
+    )
+
+    assert seen == [(1, 2, "000660", False), (2, 2, "005930", True)]
+    assert [r.code for r in results] == ["000660", "005930"]
