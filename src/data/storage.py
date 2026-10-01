@@ -180,7 +180,7 @@ class HistoricalStorage:
                     high_price=Decimal(str(record["high_price"])),
                     low_price=Decimal(str(record["low_price"])),
                     close_price=Decimal(str(record["close_price"])),
-                    volume=int(record["volume"]),
+                    volume_thousand_shares=int(record["volume_thousand_shares"]),
                     trade_value_million_krw=int(record["trade_value_million_krw"]),
                     retrieved_at=datetime.fromisoformat(str(record["retrieved_at"])),
                     is_complete=_parse_bool(record["is_complete"]),

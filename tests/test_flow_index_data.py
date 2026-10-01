@@ -108,7 +108,8 @@ def test_index_prices_restore_the_100x_encoding_and_sort_by_date() -> None:
     assert [bar.trade_date for bar in bars] == [date(2026, 9, 29), date(2026, 9, 30)]
     assert bars[-1].close_price == Decimal("6838.04")
     assert bars[-1].high_price == Decimal("6965.64")
-    assert bars[-1].volume == 285982
+    assert bars[-1].volume_thousand_shares == 285982
+    assert bars[-1].trade_value_million_krw == 20477180
     assert all(bar.is_complete for bar in bars)
 
 

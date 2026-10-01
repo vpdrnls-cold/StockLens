@@ -46,6 +46,11 @@ class IndexDailyBar:
 
     Prices are index points with the provider's 100x integer encoding
     already undone (``690853`` -> ``Decimal("6908.53")``).
+    ka20006 ``trde_qty`` is in THOUSANDS of shares even though the spec
+    says "단위: 1주": on all 597 days of 2024-04~2026-09 the top-50
+    universe's own share volume alone is 46~315x the index value, which is
+    impossible in single shares (CURRENT_STATUS item 58). The field name
+    carries the unit, like ``trade_value_million_krw``.
     ``is_complete`` is False when the bar was retrieved during the
     trading day it belongs to (an in-progress candle, AGENTS.md 2.3).
     """
@@ -56,7 +61,7 @@ class IndexDailyBar:
     high_price: Decimal
     low_price: Decimal
     close_price: Decimal
-    volume: int
+    volume_thousand_shares: int
     trade_value_million_krw: int
     retrieved_at: datetime
     is_complete: bool
@@ -69,7 +74,7 @@ class IndexDailyBar:
             "high_price": str(self.high_price),
             "low_price": str(self.low_price),
             "close_price": str(self.close_price),
-            "volume": self.volume,
+            "volume_thousand_shares": self.volume_thousand_shares,
             "trade_value_million_krw": self.trade_value_million_krw,
             "retrieved_at": self.retrieved_at.isoformat(),
             "is_complete": self.is_complete,

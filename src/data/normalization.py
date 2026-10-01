@@ -241,7 +241,8 @@ def normalize_ka20006_response(
                 high_price=_parse_index_points(row.get("high_pric"), "high_pric", context),
                 low_price=_parse_index_points(row.get("low_pric"), "low_pric", context),
                 close_price=_parse_index_points(row.get("cur_prc"), "cur_prc", context),
-                volume=_parse_int(row.get("trde_qty"), "trde_qty", context),
+                # thousands of shares despite the spec's "1주" (item 58)
+                volume_thousand_shares=_parse_int(row.get("trde_qty"), "trde_qty", context),
                 trade_value_million_krw=_parse_int(
                     row.get("trde_prica"), "trde_prica", context
                 ),
@@ -272,7 +273,7 @@ def _validate_index_bars(bars: Sequence[IndexDailyBar]) -> None:
             raise HistoricalDataValidationError(
                 f"Index prices must be positive on {day}."
             )
-        if bar.volume < 0 or bar.trade_value_million_krw < 0:
+        if bar.volume_thousand_shares < 0 or bar.trade_value_million_krw < 0:
             raise HistoricalDataValidationError(
                 f"Trading activity must not be negative on {day}."
             )
