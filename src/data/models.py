@@ -145,6 +145,21 @@ class InvestorFlowDay:
     def balance_residual(self) -> int:
         return sum(getattr(self, name) for name in INVESTOR_CATEGORIES)
 
+    @property
+    def flow_reported(self) -> bool:
+        """False when the provider has no flow breakdown for a traded day.
+
+        ka10059 returns every category as 0 for days it has no breakdown
+        for (all stocks before ~2006, and a few later days, e.g. 018260
+        before its 2014-11-14 listing). Such a row balances trivially, so
+        the identity check cannot catch it, but it is missing data, not
+        "nobody net-bought". A day with zero volume (trading halt) and zero
+        flows is a genuine zero and stays reported (CURRENT_STATUS item 58).
+        """
+        return self.volume == 0 or any(
+            getattr(self, name) != 0 for name in INVESTOR_CATEGORIES
+        )
+
     def to_dict(self) -> dict[str, str | int | bool]:
         record: dict[str, str | int | bool] = {
             "stock_code": self.stock_code,

@@ -202,9 +202,18 @@ class HistoricalStorage:
         return path
 
     def load_investor_flows(
-        self, stock_code: str, *, include_incomplete: bool = False
+        self,
+        stock_code: str,
+        *,
+        include_incomplete: bool = False,
+        include_unreported: bool = False,
     ) -> list[InvestorFlowDay]:
-        """Load investor flows; provisional/unbalanced days are excluded unless asked for."""
+        """Load investor flows.
+
+        Excluded unless asked for: provisional/unbalanced days
+        (``is_complete``) and traded days the provider has no breakdown for
+        (``flow_reported``; all-zero placeholders, mostly before ~2006).
+        """
         path = self._investor_flow_path(stock_code)
         days: list[InvestorFlowDay] = []
         for record in _read_json_list(path):
@@ -221,8 +230,11 @@ class HistoricalStorage:
                 )
             except (KeyError, TypeError, ValueError) as error:
                 raise HistoricalStorageError(f"Invalid investor flow in {path}.") from error
-            if include_incomplete or day.is_complete:
-                days.append(day)
+            if not (include_incomplete or day.is_complete):
+                continue
+            if not (include_unreported or day.flow_reported):
+                continue
+            days.append(day)
         return days
 
     def _index_path(self, index_code: str) -> Path:

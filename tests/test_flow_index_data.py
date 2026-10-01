@@ -417,3 +417,46 @@ def test_flow_batch_reports_progress_per_stock(tmp_path: Path) -> None:
 
     assert seen == [(1, 2, "000660", False), (2, 2, "005930", True)]
     assert [r.code for r in results] == ["000660", "005930"]
+
+
+_ZERO_FLOWS = {
+    k: "0"
+    for k in (
+        "ind_invsr", "frgnr_invsr", "orgn", "fnnc_invt", "insrnc", "invtrt", "etc_fnnc",
+        "bank", "penfnd_etc", "samo_fund", "natn", "etc_corp", "natfor",
+    )
+}
+
+
+def test_all_zero_flows_on_a_traded_day_are_unreported() -> None:
+    # ka10059 pads days without a breakdown (e.g. before ~2006) with zeros.
+    days = normalize_ka10059_response(
+        {
+            "stk_invsr_orgn": [
+                _flow_row("20260929"),
+                _flow_row("20260928", **_ZERO_FLOWS),  # traded, no breakdown
+                _flow_row("20260925", acc_trde_qty="0", acc_trde_prica="0", **_ZERO_FLOWS),  # halt
+            ]
+        },
+        stock_code="005930",
+        retrieved_at=AFTER_CLOSE,
+    )
+
+    by_day = {d.trade_date: d for d in days}
+    assert by_day[date(2026, 9, 29)].flow_reported
+    assert not by_day[date(2026, 9, 28)].flow_reported
+    assert by_day[date(2026, 9, 28)].is_complete  # balances trivially -- why the flag exists
+    assert by_day[date(2026, 9, 25)].flow_reported  # halt: genuine zero
+
+
+def test_loader_excludes_unreported_flows_by_default(tmp_path: Path) -> None:
+    days = normalize_ka10059_response(
+        {"stk_invsr_orgn": [_flow_row("20260929"), _flow_row("20260928", **_ZERO_FLOWS)]},
+        stock_code="005930",
+        retrieved_at=AFTER_CLOSE,
+    )
+    storage = HistoricalStorage(tmp_path)
+    storage.save_investor_flows("005930", days)
+
+    assert [d.trade_date for d in storage.load_investor_flows("005930")] == [date(2026, 9, 29)]
+    assert len(storage.load_investor_flows("005930", include_unreported=True)) == 2
