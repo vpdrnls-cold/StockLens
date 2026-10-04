@@ -28,6 +28,9 @@ Kiwoom REST API 기반 한국 주식 **분석·추천** 시스템. 최종 목표
 buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --profile`).
 최신 상태와 다음 과제는 `CURRENT_STATUS.md`의 마지막 항목을 본다.
 
+제품 레이어(분석가 패널, `AGENTS.md` 43절): 추천은 퀀트 모델만 만든다. 차트·시장·공시/뉴스
+카드는 참고 정보 — 점수·순위·`reports/daily_picks/`를 바꾸지 않고, 추천 이유로 쓰지 않는다.
+
 ## 3. 절대 깨면 안 되는 것
 
 ### 데이터 구간 잠금 (가장 중요)

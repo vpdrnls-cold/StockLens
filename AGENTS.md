@@ -1462,3 +1462,115 @@ check, the Window1 ``best_iteration`` investigation, and the
 rank/classification-target and momentum+ML ensemble experiments
 queued after Phase G, per CURRENT_STATUS.md item 34) is actually
 finished. Do not set it just to make an error go away.
+
+------------------------------------------------------------------------
+
+43. ANALYST PANEL: PRODUCT LAYER AROUND THE MODEL (added 2026-10-03)
+
+The product shows several "analyst" cards next to the recommendation
+(CURRENT_STATUS.md item 61). This section fixes what they may and may
+not do. It refines sections 10, 16, 17 and 24; it does not replace them.
+
+43.1 Two layers, never mixed
+
+  [Recommendation]  Quant model card -- the ONLY layer that produces
+                    the ranking/score. Backtested (validation W1~W3),
+                    forward check pending.
+  [Reference]       Chart / Market / Disclosure-News cards -- context
+                    for the user. They NEVER change the score, the
+                    rank, the paper-trading log (reports/daily_picks/)
+                    or any pre-registered strategy.
+
+Every reference card must be labeled in the UI as not used by the
+model. Section 24 still holds: the explanation of WHY a stock was
+recommended comes only from the quant card (TreeSHAP terms of the
+actual score). A reference card must never be phrased as a reason for
+the recommendation ("추천 이유: 자사주 취득 공시" is forbidden unless a
+validated feature for it exists in the model).
+
+A reference signal can be promoted into the model only through the
+normal path: pre-register (CURRENT_STATUS), validate on W1~W3, confirm
+out of sample. Logging card outputs daily to evaluate them later is
+allowed only as its own pre-registered evaluation, separate from the
+daily_picks paper log.
+
+43.2 Cards and their scope
+
+  Quant      model rank, percentile, top TreeSHAP drivers with actual
+             values, tie notes. Source: scripts/recommend.py logic.
+  Chart      current state of the stock (fixed, pre-registered state
+             definitions) + the historical base rate of each state
+             from OUR data, plus recent investor flow (display only
+             until flow base rates are pre-registered).
+  Market     market environment (ECOS rates/FX, KOSPI, aggregate
+             flows). Market variables are identical for every stock on
+             a date, so this card describes the environment; it does
+             not pick stocks. Stock linkage is limited to measured
+             sensitivities (e.g. rolling beta to KRW/USD). Display may
+             use the latest available value (FRED T-2 timing matters
+             only for model inputs, CURRENT_STATUS item 59).
+  Disclosure/News
+             recent filings (OpenDART list, filtered by category,
+             corrections flagged) and articles, each with the original
+             link. Summaries only; any good/bad reading is labeled as
+             an unvalidated interpretation.
+
+43.3 Base rates instead of opinions (Chart card)
+
+The chart card does not state technical-analysis rules ("golden cross
+= buy"). For each state it shows what happened after that state in our
+own data:
+
+- Period: validation windows only, 2012-01-01 ~ VALIDATION_END_DATE,
+  with the last target-horizon days purged so no label uses a price
+  after VALIDATION_END_DATE. Never test or forward.
+- Outcome: the model's target (T+1 open -> T+5 close) minus the same
+  day's universe mean (excess return), so market moves cancel out.
+- Report n observations AND n distinct dates (5-day labels overlap; n
+  overstates independence), mean, hit rate, and the sign per window
+  W1/W2/W3. If the sign differs across windows, say "no consistent
+  tendency" instead of quoting the mean as a tendency.
+- State definitions are fixed in CURRENT_STATUS before any base rate is
+  computed, and the card shows ALL states every time -- never only the
+  ones with interesting numbers.
+- Caveats shown on the card: survivorship (universe = today's top50),
+  past base rate is not a forecast, not used by the model.
+
+43.4 Numbers come from code, words may come from an LLM
+
+All numbers (states, base rates, flows, filing lists) are computed
+deterministically and stored as structured data (one JSON per stock
+per date). If an LLM writes the prose, it receives only that structured
+data and may not introduce any number, fact or source that is not in
+it; outputs are checked for numbers absent from the input. The first
+version uses fixed templates, no LLM.
+
+43.5 Disagreement is shown, not averaged
+
+When cards point in different directions (e.g. model top 10% vs chart
+"overbought"), show both. Do not build a combined "overall score" from
+reference cards unless it is validated like any model change.
+
+43.6 Personalization
+
+The survey profile may change the ORDER/EMPHASIS of reference cards
+(aggressive: chart/flow first; conservative: market environment and
+risk events first). The recommendation itself is personalized only
+through the validated path (item 56 scoring).
+
+43.7 Scope / compliance note
+
+Personal and portfolio use. Offering paid individual recommendations
+to the public may fall under Korean investment-advisory regulation
+(e.g. 유사투자자문업 신고); confirm before any public release.
+
+43.8 Build order
+
+1. Quant + Chart cards (data exists; base-rate table to build).
+2. Disclosure card (reuse scripts/check_dart_sources.py mapping and
+   categories; DART structured financials are NOT point-in-time, item
+   60 -- list/metadata only).
+3. Market card (ECOS collector needed).
+4. News (free APIs give recent articles only).
+5. Web UI: simple first (e.g. Streamlit) reading the per-stock JSON;
+   a proper web front end once the card format is stable.

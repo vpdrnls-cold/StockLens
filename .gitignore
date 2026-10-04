@@ -40,3 +40,7 @@ data/user_profile.json
 
 # Saved experiment time series + figures (regenerable; see src/reporting/run_log.py)
 reports/runs/
+
+# Analyst cards (item 61): generated outputs
+reports/analyst_cards/
+data/processed/analysts/

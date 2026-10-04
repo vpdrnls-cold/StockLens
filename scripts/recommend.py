@@ -48,6 +48,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.run_ml_backtest import STOCK_CODES, _load_priced_dataset, train_frozen_model
+from src.data.session import intraday_bar_error
 from src.data.storage import HistoricalStorage
 from src.data.universe import TOP50_UNIVERSE_PATH, load_universe_file
 from src.explanation.model_attribution import explain_pick, shap_contributions
@@ -167,6 +168,9 @@ def main() -> None:
 
     feats = live_features()
     date = latest_decision_date(feats, args.date)
+    guard = intraday_bar_error(date.date(), datetime.now(KST))  # item 63
+    if guard:
+        raise SystemExit(guard)
     day = feats[feats["trade_date"] == date].set_index("stock_code")
     cols = list(trained.feature_columns)
     day = day[day[cols].notna().sum(axis=1) >= len(cols) - 2]  # skip stocks without enough history
