@@ -72,3 +72,19 @@ def test_code_helpers() -> None:
     assert is_common_stock_code("0126Z0")
     assert not is_common_stock_code("005935")
     assert not is_common_stock_code("5930")
+
+
+# Item 68: the collection universe must contain the evaluation universe.
+def test_kospi200_collection_universe_contains_top50() -> None:
+    from src.data.universe import get_universe
+
+    kospi200, top50 = set(get_universe("kospi200")), set(get_universe("top50"))
+    assert len(kospi200) == 200
+    assert top50 <= kospi200
+
+
+def test_minute_ingest_accepts_alphanumeric_krx_codes() -> None:
+    from scripts.ingest_kiwoom_minute_chart_universe import _CODE_RE
+
+    assert _CODE_RE.match("005930") and _CODE_RE.match("0126Z0")
+    assert not _CODE_RE.match("00593") and not _CODE_RE.match("005930_NX")

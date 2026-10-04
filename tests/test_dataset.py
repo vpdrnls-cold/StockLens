@@ -333,3 +333,37 @@ def test_features_do_not_use_future_prices() -> None:
         changed_features,
         check_names=False,
     )
+
+# Item 65: optional label purge between splits (default off).
+def _purge_splits(purge_days: int):
+    stock_bars = {
+        "000660": _make_bars(stock_code="000660", count=650),
+        "005930": _make_bars(stock_code="005930", count=650),
+    }
+    dataset = build_combined_dataset(stock_bars)
+    bounds = dict(
+        train_start="2026-04-01", train_end="2027-06-30",
+        validation_start="2027-07-01", validation_end="2027-12-31",
+        test_start="2028-01-01", test_end="2028-06-20",
+    )
+    return split_by_time(dataset, **bounds, purge_days=purge_days), split_by_time(dataset, **bounds)
+
+
+def test_split_by_time_purge_default_is_unchanged() -> None:
+    purged, default = _purge_splits(0)
+    for name in ("train", "validation", "test"):
+        assert getattr(purged, name).equals(getattr(default, name))
+
+
+def test_split_by_time_purge_drops_last_dates_of_train_and_validation() -> None:
+    purged, default = _purge_splits(5)
+    for name in ("train", "validation"):
+        kept = sorted(pd.to_datetime(getattr(purged, name)["trade_date"]).unique())
+        full = sorted(pd.to_datetime(getattr(default, name)["trade_date"]).unique())
+        assert kept == full[:-5]
+    assert purged.test.equals(default.test)
+
+
+def test_split_by_time_rejects_negative_purge() -> None:
+    with pytest.raises(ValueError):
+        _purge_splits(-1)

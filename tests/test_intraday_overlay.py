@@ -51,3 +51,34 @@ def test_i5_candidate_is_fixed_and_rule_is_sign_only() -> None:
     assert ov.i5_verdict(res) == (pytest.approx(0.001), True)
     res = pd.DataFrame({"w": [0.0, 0.5], "ic": [0.010, 0.009]})
     assert ov.i5_verdict(res)[1] is False
+
+
+# Item 68: the minute folder now also holds non-universe stocks (KOSPI200 collection).
+def test_extra_stocks_in_the_minute_panel_do_not_change_universe_scores() -> None:
+    import numpy as np
+
+    from src.models.predict import train_model
+
+    rng = np.random.default_rng(3)
+    dates = pd.bdate_range("2026-01-05", periods=6)
+    universe = [f"{k:06d}" for k in range(6)]
+    extra = [f"9{k:05d}" for k in range(4)]
+    dataset = pd.DataFrame(
+        [{"trade_date": d, "stock_code": c, "a": rng.normal(), "b": rng.normal()} for d in dates for c in universe]
+    )
+    trained = train_model(
+        dataset, pd.Series(rng.normal(size=len(dataset))), dataset, pd.Series(rng.normal(size=len(dataset))),
+        feature_columns=("a", "b"), params={"n_estimators": 5, "n_jobs": 1, "tree_method": "exact"},
+    )
+
+    def panel_for(codes):
+        return pd.DataFrame(
+            [{"trade_date": d, "stock_code": c, **{f: float(int(c) % 7 + i) for f in ov.FEATURE_SIGNS}}
+             for i, d in enumerate(dates) for c in codes]
+        )
+
+    base = ov.build_scores(dataset, panel_for(universe), trained)
+    with_extra = ov.build_scores(dataset, panel_for(universe + extra), trained)
+    cols = ["trade_date", "stock_code", "z_intraday", "score_w0.5"]
+    pd.testing.assert_frame_equal(base[cols], with_extra[cols])
+    assert set(with_extra["stock_code"]) == set(universe)

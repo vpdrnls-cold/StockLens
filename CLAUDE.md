@@ -23,10 +23,11 @@ Claude Code가 이 레포에서 작업할 때 먼저 읽는 파일이다. 짧게
 Kiwoom REST API 기반 한국 주식 **분석·추천** 시스템. 최종 목표는 투자성향 설문 →
 개인화된 Top-N 추천 + 근거 설명. **실제 매수/매도 주문 기능은 만들지 않는다.**
 
-현재 운용 경로: 고정 daily XGBoost(rank 타깃, `best_iteration` 9) → KOSPI200
+현재 운용 경로: 고정 daily XGBoost(rank 타깃, `best_iteration` 9, 트리 지문 `config/frozen_daily_model.json`) → KOSPI200
 시총 상위 50(`STOCKLENS_UNIVERSE=top50`) 중 top-10 → T+1 시가 진입, 5거래일 보유,
 buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --profile`).
-최신 상태와 다음 과제는 `CURRENT_STATUS.md`의 마지막 항목을 본다.
+최신 상태와 다음 과제는 `CURRENT_STATUS.md`의 마지막 항목을 본다. 감사(2026-10-04) 후속 체크리스트는 항목 65.
+수집 유니버스는 KOSPI200 전체(`kospi200`, 항목 68)지만 평가·운용은 top50 — 추가 종목 데이터는 이번 사이클에서 쓰지 않는다.
 
 제품 레이어(분석가 패널, `AGENTS.md` 43절): 추천은 퀀트 모델만 만든다. 차트·시장·공시/뉴스
 카드는 참고 정보 — 점수·순위·`reports/daily_picks/`를 바꾸지 않고, 추천 이유로 쓰지 않는다.
@@ -37,7 +38,9 @@ buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --
 - **forward holdout(2026-09-24~)은 1회뿐이다.** 읽을 수 있는 스크립트는
   `scripts/evaluate_forward_holdout.py` 하나뿐(항목 54). 다른 곳에서
   `select_segment(..., "forward")`를 부르면 `tests/test_run_ml_backtest_config.py`가 실패한다.
-  forward를 여는 새 경로를 추가하지 말 것.
+  forward를 여는 새 경로를 추가하지 말 것. 분봉 raw(`data/raw/kiwoom/ka10080`)를 읽는 스크립트는
+  `tests/test_forward_access_guard.py` allowlist에 있어야 한다. 날짜로 자르지 않으면 forward까지 읽으므로,
+  forward를 읽지 않는다는 것(날짜 상한 등)을 확인한 뒤에만 allowlist에 추가한다(항목 65). forward 결과 단독으로 운용 경로를 바꾸지 않는다(forward2 확인 필요).
 - daily test split(2023-07-01~2026-09-16)은 항목 41에서 이미 소진됨.
   test를 읽는 코드는 반드시 `src/eval/test_lock.confirm_final_test_use()`를 먼저 호출.
 - 잠금 환경변수(`STOCKLENS_CONFIRM_FINAL_TEST`, `STOCKLENS_CONFIRM_INTRADAY_FORWARD`,
@@ -51,7 +54,8 @@ buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --
 - 판단 시점 T의 feature는 T 종가까지의 정보만. 시계열을 섞지 않는다.
 - 분할 상수의 단일 출처: `src/data/dataset.py`(daily), `src/data/intraday_split.py`(분봉).
   새 코드에서 날짜를 하드코딩하지 말고 여기서 import.
-- 데이터 로딩은 `src/feature_selection/data_loading.py`(`load_split()`) 경유.
+- 데이터 로딩은 `src/data/dataset.py`의 `build_combined_dataset()` + `split_by_time()` 경유(운용·실험 경로).
+  `src/feature_selection/data_loading.load_split()`은 9/16자 core5·close 타깃 CSV를 읽는 레거시라 새 코드에 쓰지 않는다.
 - 누수 가능성이 있는 변환에는 "미래 값을 바꿔도 결과 불변" 테스트를 붙인다.
 
 ### 실험 절차: 사전등록 → 실행 → 결과

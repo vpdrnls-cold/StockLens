@@ -47,3 +47,30 @@ def test_only_the_forward_evaluation_script_reads_the_forward_holdout() -> None:
         if _FORWARD_CALL.search(path.read_text(encoding="utf-8"))
     }
     assert readers == FORWARD_READERS
+
+
+# Item 65: the frozen model is identified by its trees, not only by best_iteration.
+def _small_model(seed: int):
+    import numpy as np
+    from src.models.predict import train_model
+
+    rng = np.random.default_rng(seed)
+    cols = ("a", "b")
+    dates = np.repeat(pd.bdate_range("2020-01-01", periods=60), 8)
+    X = pd.DataFrame({"trade_date": dates, "a": rng.normal(size=len(dates)), "b": rng.normal(size=len(dates))})
+    y = pd.Series(0.5 * X["a"] + rng.normal(scale=0.5, size=len(dates)))
+    return train_model(X, y, X, y, feature_columns=cols, params={**rmb.DETERMINISTIC_PARAMS, "n_estimators": 20})
+
+
+def test_frozen_model_fingerprint_is_deterministic_and_tree_sensitive() -> None:
+    first, again, other = _small_model(0), _small_model(0), _small_model(1)
+    assert rmb.frozen_model_fingerprint(first) == rmb.frozen_model_fingerprint(again)
+    assert rmb.frozen_model_fingerprint(first) != rmb.frozen_model_fingerprint(other)
+
+
+def test_frozen_model_matches_needs_both_rounds_and_trees() -> None:
+    model = _small_model(0)
+    fp = rmb.frozen_model_fingerprint(model)
+    assert rmb.frozen_model_matches(model, {"best_iteration": model.best_iteration, "fingerprint": fp})
+    assert not rmb.frozen_model_matches(model, {"best_iteration": model.best_iteration + 1, "fingerprint": fp})
+    assert not rmb.frozen_model_matches(model, {"best_iteration": model.best_iteration, "fingerprint": "x" * 64})

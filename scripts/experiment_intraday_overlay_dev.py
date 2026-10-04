@@ -144,7 +144,11 @@ def beta_neutral_target(df: pd.DataFrame) -> pd.Series:
 
 def build_scores(dataset: pd.DataFrame, panel: pd.DataFrame, trained) -> pd.DataFrame:
     # I1/I2: intraday score (no fitting)
-    p = panel.copy()
+    # Item 68: the raw minute folder may hold more stocks than the evaluated
+    # universe (KOSPI200 collection). The per-date z-scores are defined over
+    # the evaluated stocks only, so drop the others BEFORE standardizing --
+    # otherwise extra stocks would silently change the top50 overlay scores.
+    p = panel[panel["stock_code"].isin(set(dataset["stock_code"]))].copy()
     zs = []
     for f, sign in FEATURE_SIGNS.items():
         p[f"_z_{f}"] = sign * zscore_by_date(p, f)

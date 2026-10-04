@@ -43,7 +43,11 @@ DEFAULT_UNIVERSE = "core5"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOP50_UNIVERSE_PATH = PROJECT_ROOT / "config" / "universe_kospi200_top50.json"
 
-_UNIVERSE_FILES: dict[str, Path] = {"top50": TOP50_UNIVERSE_PATH}
+# Item 68: every common-stock KOSPI200 constituent on 2026-10-04 (200 stocks,
+# a superset of top50). Collection only -- no experiment or decision of the
+# current cycle uses the extra stocks.
+KOSPI200_UNIVERSE_PATH = PROJECT_ROOT / "config" / "universe_kospi200.json"
+_UNIVERSE_FILES: dict[str, Path] = {"top50": TOP50_UNIVERSE_PATH, "kospi200": KOSPI200_UNIVERSE_PATH}
 
 
 class UniverseError(RuntimeError):

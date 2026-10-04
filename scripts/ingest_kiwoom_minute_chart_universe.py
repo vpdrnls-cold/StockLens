@@ -47,7 +47,8 @@ KST = timezone(timedelta(hours=9))
 DAY_CLOSE_HOUR_KST = 20  # 애프터마켓 종료 → 당일 봉 확정 시각
 DEFAULT_UNIVERSE = PROJECT_ROOT / "config" / "universe_kospi200_top50.json"
 RAW_DIR = PROJECT_ROOT / "data" / "raw" / "kiwoom" / "ka10080"
-_CODE_RE = re.compile(r"^\d{6}$")
+# KRX short codes: 6 digits, or 6 upper-case alphanumerics for newer listings (e.g. 0126Z0, item 68)
+_CODE_RE = re.compile(r"^[0-9A-Z]{6}$")
 _FILE_TS_RE = re.compile(r"^(\d{8}T\d{6})")
 
 

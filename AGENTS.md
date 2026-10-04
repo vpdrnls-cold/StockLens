@@ -120,6 +120,11 @@ Feature Selection must not be treated as an isolated mechanical step.
 
 2. CURRENT PROJECT STATUS
 
+NOTE (2026-10-04, CURRENT_STATUS item 65): this section is a snapshot from
+the project's first days (five stocks, ~601 bars). It is kept for the
+history of the in-progress-candle discovery below. The current state lives
+in CURRENT_STATUS.md sections 1-8; do not read the numbers here as current.
+
 At the current point in development, the following has been completed or
 substantially implemented:
 
@@ -196,6 +201,14 @@ system to always use yesterday’s data.
 
 Historical training and real-time inference have different information
 states.
+
+How the current pipeline applies this (item 63/65): the live decision is made
+after T's session is final (decision time A, item 46), so it does NOT use an
+in-progress candle. `src/data/session.py::intraday_bar_error()` stops
+`scripts/recommend.py` and `scripts/chart_card.py` when the decision date is
+today and it is before `SESSION_FINAL_TIME_KST`. Using an in-progress candle
+would need its own decision timestamp, target, and validation (a new
+pre-registered design), not just removing that guard.
 
 ------------------------------------------------------------------------
 

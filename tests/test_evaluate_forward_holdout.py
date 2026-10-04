@@ -92,27 +92,67 @@ def test_summarize_ties_percentile() -> None:
 
 
 def test_forward_look_requires_the_frozen_model() -> None:
-    assert fh.frozen_model_ok(9) is True
-    assert fh.frozen_model_ok(8) is False
+    expected = {"best_iteration": 9, "fingerprint": "abc"}
+    assert fh.frozen_model_ok(9, "abc", expected) is True
+    assert fh.frozen_model_ok(8, "abc", expected) is False
+    assert fh.frozen_model_ok(9, "other", expected) is False  # same rounds, different trees (item 65)
 
 
-# --- item 53 deployment rules (confirmed 2026-09-29) ---------------------------
+def test_recorded_frozen_model_file_is_consistent() -> None:
+    recorded = fh.expected_frozen_model()
+    assert int(recorded["best_iteration"]) == fh.EXPECTED_BEST_ITERATION
+    assert len(recorded["fingerprint"]) == 64
 
 
-def test_overlay_deployed_only_when_both_pass() -> None:
+# --- item 53 deployment rules (confirmed 2026-09-29; item 65: forward2 candidate, not deploy) ---
+
+
+def test_overlay_forward2_candidateed_only_when_both_pass() -> None:
     v = fh.verdicts(_res(0.02, 0.03), coverage=0.95)
-    assert v["i6_status"] == "not_rejected" and v["overlay_deploy"] is True
+    assert v["i6_status"] == "not_rejected" and v["overlay_forward2_candidate"] is True
 
 
-def test_overlay_not_deployed_when_daily_rejected() -> None:
+def test_overlay_not_candidate_when_daily_rejected() -> None:
     v = fh.verdicts(_res(-0.02, 0.01), coverage=0.95)
     assert v["d2_not_rejected"] is False
     assert v["i6_not_rejected"] is True  # I6 itself is still recorded as pre-registered
-    assert v["overlay_deploy"] is False
+    assert v["overlay_forward2_candidate"] is False
 
 
 def test_i6_withheld_below_coverage_threshold() -> None:
     v = fh.verdicts(_res(0.02, 0.03), coverage=0.79)
-    assert v["i6_status"] == "withheld" and v["overlay_deploy"] is False
+    assert v["i6_status"] == "withheld" and v["overlay_forward2_candidate"] is False
     assert fh.verdicts(_res(0.02, 0.01), coverage=0.79)["i6_status"] == "withheld"
     assert fh.verdicts(_res(0.02, 0.03), coverage=0.80)["i6_status"] == "not_rejected"
+
+
+# --- rebalance-phase sensitivity (item 65, info only) -------------------------
+
+
+def test_phase_offsets_fixed() -> None:
+    assert fh.PHASE_OFFSETS == (0, 1, 2, 3, 4)
+
+
+def test_phase_offset_drops_leading_dates() -> None:
+    part = _synthetic_part(n_stocks=3, n_dates=10)
+    dates = sorted(part["trade_date"].unique())
+    assert fh.phase_offset_part(part, 0).equals(part)
+    assert fh.phase_offset_part(part, 2)["trade_date"].min() == dates[2]
+    assert fh.phase_offset_part(part, 99).empty
+
+
+def test_phase_zero_reproduces_the_reported_schedule(monkeypatch) -> None:
+    monkeypatch.setattr(fh, "BUFFERED_CONFIG", replace(fh.BUFFERED_CONFIG, allow_partial_universe=True))
+    part = _synthetic_part(tied=False)
+    part["target_return_5d"] = 0.01
+    strat = (("daily", "score_w0.0"),)
+    phases = fh.phase_sensitivity(part, strat)
+    assert list(phases["offset"]) == list(fh.PHASE_OFFSETS)
+    scores = part[["trade_date", "stock_code", "score_w0.0"]].rename(columns={"score_w0.0": "predicted_return"})
+    net, _ = fh.run_buffered_backtest_with_turnover(
+        fh._to_data_by_stock(part), fh.BUFFERED_CONFIG, score_fn=fh.make_model_score_fn(scores), top_n=fh.TOP_N
+    )
+    reported = fh.calculate_performance(net)["total_return"]
+    assert phases.loc[phases["offset"] == 0, "net_cum"].iloc[0] == reported
+    row = phases.iloc[0]
+    assert row["excess_vs_univ"] == row["net_cum"] - row["univ_ew_gross"]

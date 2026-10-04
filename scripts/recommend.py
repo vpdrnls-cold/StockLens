@@ -23,6 +23,13 @@ Not included on purpose
   - The intraday overlay (w=0.5) is still a candidate until the forward check
     (items 49/50) -- daily score only.
 
+Buffered holdings (item 66)
+  The backtested / forward-evaluated strategy keeps a held stock while it stays in
+  the top 30 (buffer 3.0 x top 10), so its holdings differ from the plain top-N.
+  A neutral run therefore also prints the strategy's holdings for T, recomputed by
+  replaying the earlier neutral logs' rankings with the engine's own rule
+  (src/portfolio/paper_holdings.py), and stores them as ``held_buffered``.
+
 Risk profiles (item 56)
   --profile conservative | aggressive re-ranks with src/recommendation/scoring.py:
   z(model) + lambda * profile tilt, lambda calibrated on the frozen model's
@@ -47,11 +54,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from scripts.run_ml_backtest import STOCK_CODES, _load_priced_dataset, train_frozen_model
+from scripts.run_ml_backtest import (
+    BUFFER_MULTIPLIER,
+    STOCK_CODES,
+    TOP_N,
+    _load_priced_dataset,
+    frozen_model_matches,
+    train_frozen_model,
+)
 from src.data.session import intraday_bar_error
 from src.data.storage import HistoricalStorage
 from src.data.universe import TOP50_UNIVERSE_PATH, load_universe_file
 from src.explanation.model_attribution import explain_pick, shap_contributions
+from src.portfolio.paper_holdings import HoldingStep, load_logged_rankings, replay_holdings, schedule_gaps
 from src.features.engineering import FEATURE_COLUMNS, build_features
 from src.ml.strategy import predictions_for_dataset
 from src.recommendation import survey
@@ -124,6 +139,17 @@ def rank_like_engine(scores: pd.Series) -> pd.Series:
     return pd.Series(range(1, len(order) + 1), index=order).reindex(scores.index)
 
 
+def buffered_holdings(day_ranked: list[str], date: pd.Timestamp, log_dir: Path):
+    """Strategy holdings for ``date`` (item 66): replay earlier neutral logs, then today.
+
+    Returns (today's step, previous step or None, number of earlier logs, schedule gaps).
+    """
+    history = load_logged_rankings(log_dir, before=date)
+    steps = replay_holdings(history + [(date, day_ranked)], top_n=TOP_N, buffer_multiplier=BUFFER_MULTIPLIER)
+    prev: HoldingStep | None = steps[-2] if len(steps) > 1 else None
+    return steps[-1], prev, len(history), schedule_gaps([d for d, _ in history] + [date])
+
+
 def staleness_warning(date: pd.Timestamp) -> str | None:
     """Warn when the newest bar is older than the last finished weekday session."""
     now = datetime.now(KST)
@@ -162,9 +188,10 @@ def main() -> None:
         args.profile = saved.profile
 
     trained, splits = train_frozen_model(_load_priced_dataset())
-    if trained.best_iteration != EXPECTED_BEST_ITERATION:
-        print(f"주의: 고정 모델 best_iteration={trained.best_iteration} (기대값 {EXPECTED_BEST_ITERATION}). "
-              "학습 데이터나 코드가 바뀌었는지 확인하세요.")
+    if trained.best_iteration != EXPECTED_BEST_ITERATION or not frozen_model_matches(trained):
+        print(f"주의: 고정 모델이 기록된 모델과 다릅니다(best_iteration={trained.best_iteration}, "
+              f"기대값 {EXPECTED_BEST_ITERATION}, 트리 지문은 config/frozen_daily_model.json). "
+              "학습 데이터나 코드·라이브러리가 바뀌었는지 확인하세요. forward 평가는 이 상태로 실행되지 않습니다.")
 
     feats = live_features()
     date = latest_decision_date(feats, args.date)
@@ -220,14 +247,6 @@ def main() -> None:
             text += (f"\n  · 같은 점수 {int(r['tie_size'])}종목 — 백테스트와 같은 규칙"
                      "(종목코드 오름차순)으로 순위를 정함")
         print(text + "\n")
-    for code, r in day.sort_values("rank").iterrows():
-        top3 = contribs.loc[code].drop("bias").abs().sort_values(ascending=False).index[:3]
-        rows.append({
-            "trade_date": date.date(), "rank": int(r["rank"]), "stock_code": code,
-            "name": names.get(code, code), "score": float(r["score"]), "tie_size": int(r["tie_size"]),
-            "top_drivers": ";".join(f"{f}:{contribs.loc[code, f]:+.4f}" for f in top3),
-            "profile": args.profile, "personalized_score": float(r["personalized_score"]),
-        })
 
     if args.profile != "neutral":
         print("성향 반영 순위는 모델 점수에 투자성향(변동성·거래량) 기울기를 더한 것입니다. 항목 56 validation에서 "
@@ -238,7 +257,43 @@ def main() -> None:
     if n_tied > len(picks):
         print(f"동점 주의: {len(picks)}위 점수 이상인 종목이 {n_tied}개입니다. 모델 점수 종류가 적어서 "
               "상위권 일부는 동점 처리 규칙으로 정해집니다.")
+    held = None
+    if args.profile == "neutral":
+        step, prev, n_logs, gaps = buffered_holdings(
+            [str(c) for c in day.sort_values("rank").index], date, Path(args.out)
+        )
+        held = step.held
+        print("\n" + "-" * 78)
+        print(f"평가 대상 전략(top-{TOP_N}, buffer {BUFFER_MULTIPLIER})의 보유 종목 — 이전 기록 {n_logs}개를 같은 규칙으로 재생")
+        print("-" * 78)
+        for code in day.sort_values("rank").index:
+            if code in held:
+                tag = "유지" if code in step.carried else "신규"
+                print(f"  [{tag}] {names.get(code, code)}({code}) — 오늘 {int(day.loc[code, 'rank'])}위")
+        if prev is not None:
+            sold = sorted(prev.held - held)
+            print("  매도: " + (", ".join(f"{names.get(c, c)}({c})" for c in sold) if sold else "없음"))
+        else:
+            print("  (첫 기록 — 보유가 없던 상태에서 시작해 상위 10개와 같음)")
+        print("위 상위 목록은 그날 순위 그대로이고, 전략은 이미 보유한 종목을 30위 안이면 유지합니다. "
+              "실제 전략과 비교할 것은 이 보유 목록입니다.")
+        if gaps:
+            print("주의: 기록 간격이 벌어진 구간이 있어(" + ", ".join(f"{a:%m-%d}→{b:%m-%d}" for a, b in gaps)
+                  + ") 엔진의 5거래일 리밸런싱 일정과 다릅니다.")
+    else:
+        print("전략과의 차이: 이 목록은 성향을 반영한 그날 순위입니다. 평가 대상 전략(중립, buffer 3.0)의 보유 종목은 "
+              "중립 실행에서 확인하세요(항목 66).")
     print("검증 상태: 이 모델의 표본 밖 성과 확인은 2027년 1월 forward 평가 전까지 미완료입니다. 투자 권유가 아닙니다.")
+
+    for code, r in day.sort_values("rank").iterrows():
+        top3 = contribs.loc[code].drop("bias").abs().sort_values(ascending=False).index[:3]
+        rows.append({
+            "trade_date": date.date(), "rank": int(r["rank"]), "stock_code": code,
+            "name": names.get(code, code), "score": float(r["score"]), "tie_size": int(r["tie_size"]),
+            "top_drivers": ";".join(f"{f}:{contribs.loc[code, f]:+.4f}" for f in top3),
+            "profile": args.profile, "personalized_score": float(r["personalized_score"]),
+            "held_buffered": (code in held) if held is not None else None,
+        })
 
     if not args.no_save:
         out = Path(args.out if args.profile == "neutral" else f"{args.out}_{args.profile}")

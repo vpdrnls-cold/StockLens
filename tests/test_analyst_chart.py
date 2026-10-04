@@ -109,6 +109,8 @@ def test_flow_summary_uses_only_days_up_to_asof() -> None:
 def test_card_always_shows_every_state_and_is_reference_only() -> None:
     frame = chart.base_rate_frame(_dataset())
     rates = chart.compute_base_rates(frame)
+
+    
     row = frame.iloc[0]
     card = chart.build_card("000000", "테스트", date(2026, 10, 2), row, row, rates, {"last_flow_date": None}, {})
     assert [s["state"] for s in card["states"]] == [s.key for s in chart.STATE_SPECS]

@@ -1,0 +1,7 @@
+{
+  "description": "Identity of the pre-registered frozen daily model (CURRENT_STATUS items 46/47/53/65). Train 2002-10-29~2019-12-31, early stopping on 2020-01-01~2023-06-30, rank target, IC early stopping, tree_method=exact, n_jobs=1, top50 universe. fingerprint = sha256 over the feature order and the first best_iteration+1 tree dumps (scripts/run_ml_backtest.py::frozen_model_fingerprint). Recorded from train/validation data only; the forward holdout was not read.",
+  "best_iteration": 9,
+  "fingerprint": "f397507a27b464e6d454eba63bf72e5aa2b60be48d1af3ac790e79e4ce81f5f6",
+  "xgboost_version": "3.4.1",
+  "recorded": "2026-10-04"
+}

@@ -4,6 +4,22 @@ Real-time stock analysis and personalized stock recommendation project.
 
 See [`CODEX_CONTEXT.md`](CODEX_CONTEXT.md) for the project context and development rules.
 
+## Current status (2026-10-04)
+
+Research / validation stage, not production. A fixed daily XGBoost ranking
+model scores the 50 largest KOSPI200 stocks; the strategy holds the top 10
+for 5 trading days with a turnover buffer. It has not yet been checked on
+clean out-of-sample data -- a one-time forward evaluation is scheduled for
+early January 2027. Nothing here is investment advice.
+
+- Current state, open issues and the work log: [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
+  (summary in sections 1-8, latest item at the end).
+- Permanent development rules: [`AGENTS.md`](AGENTS.md); short guide for
+  Claude Code: [`CLAUDE.md`](CLAUDE.md).
+- Daily picks (paper-trading log only): `scripts/recommend.py`.
+
+The sections below are the original Kiwoom connectivity notes and still work.
+
 ## Scope
 - Stock analysis and recommendation
 - Historical backtesting

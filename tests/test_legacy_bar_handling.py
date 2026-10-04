@@ -1,4 +1,4 @@
-"""OHLC-inconsistent bars from before 2000 are dropped; later ones still fail."""
+"""OHLC-inconsistent bars before the training start (2002-10-29) are dropped; later ones still fail."""
 
 from __future__ import annotations
 
@@ -53,3 +53,20 @@ def test_inconsistent_bar_after_cutoff_is_still_rejected(response: dict) -> None
     data["stk_dt_pole_chart_qry"].append(_legacy_row("20050103", high_pric="900"))
     with pytest.raises(HistoricalDataValidationError, match="High price is below"):
         normalize_ka10081_response(data)
+
+
+def test_cutoff_is_the_training_start(response: dict) -> None:
+    # Item 68: 018880 failed on a 2001-12-18 bar under the old 2000-01-01 cutoff.
+    from src.data.dataset import TRAIN_START_DATE
+    from src.data.normalization import LEGACY_OHLC_TOLERANCE_BEFORE
+
+    assert LEGACY_OHLC_TOLERANCE_BEFORE.isoformat() == TRAIN_START_DATE
+    data = deepcopy(response)
+    data["stk_dt_pole_chart_qry"].append(_legacy_row("20011218", low_pric="1100"))
+    dates = {b.trade_date.isoformat() for b in normalize_ka10081_response(data)}
+    assert "2001-12-18" not in dates
+    later = deepcopy(response)
+    later["stk_dt_pole_chart_qry"].append(_legacy_row("20021029", low_pric="1100"))
+    with pytest.raises(HistoricalDataValidationError):
+        normalize_ka10081_response(later)
+

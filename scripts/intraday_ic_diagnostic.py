@@ -15,6 +15,12 @@ ka10080 15분봉(약 1년 × 유니버스)으로 종목-일 단위 intraday 요�
   - 거래정지일은 데이터가 없으므로 결측. label 구간(d+1..d+h)에 결측이 있으면 label도 결측
   - 분할 전 분봉 거래량 미조정 문제 → 거래량 feature는 '하루 안 비중' 형태만 사용
 
+Forward holdout 보호 (CURRENT_STATUS 항목 65)
+  - 판단일 d 는 FORWARD_START(2026-09-24) 전날까지만 쓴다(--end, 기본값 = 그 전날).
+    --end 를 FORWARD_START 이후로 주면 중단한다. 라벨도 잘린 패널 안에서만 만들어지므로
+    마지막 h일의 라벨은 결측이 되고 forward 가격을 읽지 않는다.
+  - forward 를 읽을 수 있는 스크립트는 scripts/evaluate_forward_holdout.py 하나뿐(항목 54).
+
 사용 (저장소 루트에서):
     python scripts/intraday_ic_diagnostic.py
     python scripts/intraday_ic_diagnostic.py --horizons 1 5 10 --min-stocks 30
@@ -24,10 +30,18 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.data.intraday_split import FORWARD_START  # noqa: E402
+from src.data.universe import get_universe  # noqa: E402
 
 REG_TIMES = [f"{h:02d}:{m:02d}" for h in range(9, 16) for m in (0, 15, 30, 45)
              if (h, m) <= (15, 15)] + ["15:30"]  # 27개
@@ -123,9 +137,13 @@ def day_features(g: pd.DataFrame) -> dict | None:
     }
 
 
-def build_panel(minute_root: Path) -> pd.DataFrame:
+def build_panel(minute_root: Path, codes=None) -> pd.DataFrame:
+    """Per stock-day features from the raw minute files; ``codes`` limits the stocks (item 68)."""
+    wanted = None if codes is None else {str(c).zfill(6) for c in codes}
     rows = []
-    for code_dir in sorted(p for p in minute_root.iterdir() if p.is_dir() and re.fullmatch(r"\d{6}", p.name)):
+    for code_dir in sorted(p for p in minute_root.iterdir() if p.is_dir() and re.fullmatch(r"[0-9A-Z]{6}", p.name)):
+        if wanted is not None and code_dir.name not in wanted:
+            continue
         m = load_minute(code_dir)
         if m.empty:
             continue
@@ -223,21 +241,44 @@ def summarize(ic: pd.DataFrame, h: int, redundancy: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def default_end_date() -> str:
+    """The last decision date this diagnostic may use: the day before the forward holdout."""
+    return (pd.Timestamp(FORWARD_START) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def cap_before_forward(panel: pd.DataFrame, end: str) -> pd.DataFrame:
+    """Drop every row dated after ``end``; refuse an ``end`` inside the forward holdout (item 65).
+
+    Must run before labels are built, so no label can read a forward price.
+    """
+    if pd.Timestamp(end) >= pd.Timestamp(FORWARD_START):
+        raise SystemExit(
+            f"--end {end} 는 forward holdout({FORWARD_START}~) 안입니다. forward 는 "
+            "scripts/evaluate_forward_holdout.py 에서 한 번만 봅니다(항목 54·65)."
+        )
+    return panel[pd.to_datetime(panel["date"]) <= pd.Timestamp(end)].copy()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--minute-dir", default="data/raw/kiwoom/ka10080")
     ap.add_argument("--out", default="reports/intraday_ic")
     ap.add_argument("--horizons", type=int, nargs="+", default=[1, 5])
     ap.add_argument("--min-stocks", type=int, default=20, help="하루 IC 계산에 필요한 최소 종목 수")
+    ap.add_argument("--universe", default="top50",
+                    help="분봉 폴더 중 이 유니버스 종목만 사용 (항목 68: 폴더에 KOSPI200 전체가 쌓임)")
+    ap.add_argument("--end", default=default_end_date(),
+                    help=f"마지막 판단일 (기본: forward 시작 {FORWARD_START} 전날, 그 이후는 거부)")
     args = ap.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
     print("feature 계산 중...")
-    panel = build_panel(Path(args.minute_dir))
+    panel = build_panel(Path(args.minute_dir), codes=get_universe(args.universe))
     if panel.empty:
         raise SystemExit(f"분봉 데이터 없음: {args.minute_dir}")
+    panel = cap_before_forward(panel, args.end)
     panel = add_labels_and_benchmarks(panel, args.horizons)
     panel = panel[panel["_valid"]].drop(columns=["_valid"])
 

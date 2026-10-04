@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Mapping, Sequence
 
+from src.data.dataset import TRAIN_START_DATE
 from src.data.models import (
     INVESTOR_CATEGORIES,
     DailyBar,
@@ -65,16 +66,21 @@ _KA10059_FLOW_FIELDS = {
 _DOCUMENTED_CHANGE_SIGNS = {1, 2, 3, 4, 5}
 
 
-# Very old bars (1980s~1990s) of long-listed stocks come back from Kiwoom
-# with internally inconsistent OHLC (e.g. high below close), an artifact
-# of adjusting/rounding prices for decades of splits and rights issues
-# (seen for 000270 Kia in 1985 and 009150 Samsung Electro-Mechanics in
-# 1986). Nothing in the model pipeline uses them: the training window
-# starts at 2002-10-29 (src/data/dataset.py) and rolling features only
-# look back ~60 bars. Rather than discard a whole stock over a 40-year-old
-# bar, OHLC-inconsistent bars dated BEFORE this cutoff are dropped with a
-# warning; the same inconsistency on/after it is still a hard error.
-LEGACY_OHLC_TOLERANCE_BEFORE = date(2000, 1, 1)
+# Very old bars of long-listed stocks come back from Kiwoom with internally
+# inconsistent OHLC (e.g. high below close), an artifact of adjusting/
+# rounding prices for decades of splits and rights issues (seen for 000270
+# Kia in 1985, 009150 Samsung Electro-Mechanics in 1986, and 018880 Hanon
+# Systems on 2001-12-18). Rather than discard a whole stock over such a bar,
+# OHLC-inconsistent bars dated BEFORE this cutoff are dropped with a warning;
+# the same inconsistency on/after it is still a hard error.
+#
+# The cutoff is the start of the training window (CURRENT_STATUS item 68;
+# it was 2000-01-01 in item 29): no model row is dated before it. Moving it
+# from 2000-01-01 changed no stored top50 bar -- those stocks already passed
+# the strict check from 2000 on. A dropped bar shortly before the cutoff can
+# still shorten the ~60-bar warm-up of the first rolling features, which only
+# affects rows of a stock that actually had such a bar.
+LEGACY_OHLC_TOLERANCE_BEFORE = date.fromisoformat(TRAIN_START_DATE)
 
 
 class HistoricalDataValidationError(ValueError):

@@ -7,6 +7,9 @@ score only (no intraday panel needed). Checks:
   2. tie stats reproduce item 51 (~7.8 distinct scores/day, ~18.5 at/above 10th)
   3. with ties removed (tiny noise added), every stock order gives the same
      result -> the order acts only through ties
+  4. (item 65) the same rebalance-phase sensitivity the forward report uses
+     (start shifted by 0..4 trading days), saved to validation_phase_sensitivity.csv.
+     --phase-only runs just this part and leaves the tie CSVs untouched.
 
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/diagnose_tie_sensitivity_validation.py
 """
@@ -39,6 +42,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=fh.TIE_PERMUTATIONS, help="number of random stock orders")
     ap.add_argument("--seed", type=int, default=fh.TIE_SEED)
     ap.add_argument("--out", default="reports/tie_sensitivity_validation")
+    ap.add_argument("--phase-only", action="store_true", help="only the rebalance-phase check (item 65)")
     args = ap.parse_args()
 
     trained, splits = train_frozen_model(_load_priced_dataset())
@@ -49,6 +53,17 @@ def main() -> None:
     val = val.merge(pred[["trade_date", "stock_code", "predicted_return"]], on=["trade_date", "stock_code"])
     val["score_w0.0"] = val["predicted_return"]
     strat = (("daily", "score_w0.0"),)
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    phases = fh.phase_sensitivity(val, strategies=strat)
+    phases.to_csv(out / "validation_phase_sensitivity.csv", index=False, encoding="utf-8-sig")
+    print("\nREBALANCE-PHASE SENSITIVITY (item 65), offset 0 = reported schedule")
+    print(phases.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    print(f"net_cum range {phases['net_cum'].min():+.1%} ~ {phases['net_cum'].max():+.1%}, "
+          f"MDD worst {phases['mdd'].min():+.1%}")
+    if args.phase_only:
+        return
 
     data_by_stock = _to_data_by_stock(val)
     score_fn = make_model_score_fn(val[["trade_date", "stock_code", "predicted_return"]])
@@ -65,8 +80,6 @@ def main() -> None:
     ctrl = fh.tie_sensitivity(val, strategies=(("no_ties", "score_no_ties"),), n=5, seed=args.seed)
     spread = float(ctrl["net_cum"].max() - ctrl["net_cum"].min())
 
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
     sens.to_csv(out / "validation_tie_permutations.csv", index=False, encoding="utf-8-sig")
     ties.to_csv(out / "validation_tie_sensitivity.csv", index=False, encoding="utf-8-sig")
 

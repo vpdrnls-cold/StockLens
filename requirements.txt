@@ -1,9 +1,15 @@
-requests
+# Pinned to the environment that produced the frozen daily model's fingerprint
+# (config/frozen_daily_model.json, CURRENT_STATUS items 53/65): Python 3.14.3,
+# macOS arm64. Do not upgrade before the forward evaluation (early January
+# 2027) -- a different xgboost/numpy/pandas can change the trees, and the
+# forward script then stops before reading the forward period.
+requests==2.34.2
 pandas==3.0.5
 numpy==2.5.2
-python-dotenv
-pydantic
-scikit-learn
+python-dotenv==1.2.3
+pydantic==2.13.4
+scikit-learn==1.9.0
+scipy==1.18.1
 xgboost==3.4.1
-pytest
-matplotlib
+pytest==9.1.1
+matplotlib==3.11.2

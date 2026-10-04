@@ -59,6 +59,40 @@ class BufferedBaselineConfig(BaselineConfig):
     buffer_multiplier: float | None = None
 
 
+def buffer_rank_limit(top_n: int, buffer_multiplier: float | None) -> int | None:
+    """Rank a held stock must stay within to be kept (None = no buffering)."""
+    if buffer_multiplier is None:
+        return None
+    return max(top_n, math.floor(buffer_multiplier * top_n))
+
+
+def select_held(
+    held: set[str], ranked: list[str], top_n: int, buffer_rank: int | None
+) -> tuple[set[str], set[str]]:
+    """One rebalance of the buffer rule: ``(new_held, carried)``.
+
+    ``ranked`` is today's eligible stocks, best first. Shared by the backtest
+    engine and the live paper log (``src/portfolio/paper_holdings.py``, item 66)
+    so both apply exactly the same rule.
+    """
+    if buffer_rank is None:
+        # No buffering: every period is a fresh top_n pick, full
+        # stop. Nothing is ever "carried" -- even if the same
+        # stock code happens to be picked again next period, that
+        # is a coincidence of the ranking, not a decision to hold,
+        # and must still be charged a full round trip (see the
+        # _build_held_timeline docstring for why this is load-bearing).
+        return set(ranked[:top_n]), set()
+    rank_of = {code: i + 1 for i, code in enumerate(ranked)}
+    keep = sorted(
+        (c for c in held if rank_of.get(c, math.inf) <= buffer_rank),
+        key=lambda c: rank_of[c],
+    )[:top_n]
+    keep_set = set(keep)
+    fill = [c for c in ranked if c not in keep_set][: top_n - len(keep_set)]
+    return keep_set | set(fill), keep_set
+
+
 def _build_held_timeline(
     data_by_stock: dict[str, pd.DataFrame],
     config: BufferedBaselineConfig,
@@ -133,9 +167,7 @@ def _build_held_timeline(
         range(first_decision_index, last_decision_index + 1, config.holding_days)
     )
 
-    buffer_rank = None
-    if config.buffer_multiplier is not None:
-        buffer_rank = max(top_n, math.floor(config.buffer_multiplier * top_n))
+    buffer_rank = buffer_rank_limit(top_n, config.buffer_multiplier)
 
     held_over_time: list[set[str]] = []
     carried_over_time: list[set[str]] = []
@@ -161,26 +193,7 @@ def _build_held_timeline(
         ranked = sorted(scores, key=scores.get, reverse=True)
         rank_of = {code: i + 1 for i, code in enumerate(ranked)}
 
-        if buffer_rank is None:
-            # No buffering: every period is a fresh top_n pick, full
-            # stop. Nothing is ever "carried" -- even if the same
-            # stock code happens to be picked again next period, that
-            # is a coincidence of the ranking, not a decision to hold,
-            # and must still be charged a full round trip (see the
-            # docstring above for why this distinction is load-bearing).
-            new_held = set(ranked[:top_n])
-            carried = set()
-        else:
-            keep = sorted(
-                (c for c in held if rank_of.get(c, math.inf) <= buffer_rank),
-                key=lambda c: rank_of[c],
-            )[:top_n]
-            keep_set = set(keep)
-            fill = [c for c in ranked if c not in keep_set][
-                : top_n - len(keep_set)
-            ]
-            new_held = keep_set | set(fill)
-            carried = keep_set
+        new_held, carried = select_held(held, ranked, top_n, buffer_rank)
 
         held_over_time.append(new_held)
         carried_over_time.append(carried)

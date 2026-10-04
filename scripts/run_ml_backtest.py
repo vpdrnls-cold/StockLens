@@ -41,6 +41,10 @@ history before this change (item 41) if it ever needs to be reproduced.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -84,6 +88,12 @@ BUFFERED_CONFIG = BufferedBaselineConfig(**COST_KWARGS, buffer_multiplier=BUFFER
 
 # Item 45, A_all19, W3 (same model as this script's validation run).
 EXPECTED_VALIDATION = {"ml_buffered": 0.650, "ml_plain": -0.022}
+
+# Item 65: the frozen model is retrained on every run from data files that are
+# re-downloaded weekly, so best_iteration alone is a weak identity check. The
+# fingerprint below hashes the actual trees; its expected value was recorded
+# once (train/validation data only) in this file.
+FROZEN_MODEL_FILE = Path(__file__).resolve().parents[1] / "config" / "frozen_daily_model.json"
 
 
 def _load_priced_dataset() -> pd.DataFrame:
@@ -138,6 +148,31 @@ def train_frozen_model(dataset: pd.DataFrame) -> tuple[TrainedModel, object]:
         early_stopping_metric="ic",
     )
     return trained, splits
+
+
+def frozen_model_fingerprint(trained: TrainedModel) -> str:
+    """sha256 of the trees the model actually predicts with, plus its feature order.
+
+    Only the first ``best_iteration + 1`` trees are hashed (what ``predict`` uses after
+    early stopping). Deterministic under DETERMINISTIC_PARAMS (exact, single thread).
+    """
+    trees = trained.model.get_booster().get_dump(with_stats=False)[: trained.best_iteration + 1]
+    payload = json.dumps({"features": list(trained.feature_columns), "trees": trees})
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def expected_frozen_model(path: Path = FROZEN_MODEL_FILE) -> dict:
+    """The recorded identity of the pre-registered frozen model (config/frozen_daily_model.json)."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def frozen_model_matches(trained: TrainedModel, expected: dict | None = None) -> bool:
+    """True when this run trained exactly the recorded frozen model (best_iteration AND trees)."""
+    expected = expected if expected is not None else expected_frozen_model()
+    return (
+        trained.best_iteration == int(expected["best_iteration"])
+        and frozen_model_fingerprint(trained) == expected["fingerprint"]
+    )
 
 
 def evaluate_period(period: pd.DataFrame, trained: TrainedModel) -> tuple[pd.DataFrame, dict, float]:
@@ -195,6 +230,8 @@ def main() -> None:
     print("=== Training frozen daily model (train -> validation early stopping) ===")
     trained, splits = train_frozen_model(dataset)
     print(f"Best iteration: {trained.best_iteration}")
+    print(f"Fingerprint: {frozen_model_fingerprint(trained)} -> "
+          + ("MATCH" if frozen_model_matches(trained) else f"MISMATCH vs {FROZEN_MODEL_FILE.name}"))
     print()
 
     table, _, ic = evaluate_period(splits.validation, trained)

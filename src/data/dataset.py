@@ -176,6 +176,13 @@ def build_combined_dataset(
 
     return combined
 
+def _drop_last_dates(part: pd.DataFrame, n: int) -> pd.DataFrame:
+    """Rows of ``part`` except those on its last ``n`` distinct trade dates."""
+    dates = pd.to_datetime(part["trade_date"])
+    last = sorted(dates.unique())[-n:]
+    return part.loc[~dates.isin(last)]
+
+
 @dataclass(frozen=True)
 class TimeSplit:
     """Time-based train, validation, and test datasets."""
@@ -194,8 +201,22 @@ def split_by_time(
     validation_end: str = VALIDATION_END_DATE,
     test_start: str = TEST_START_DATE,
     test_end: str = TEST_END_DATE,
+    purge_days: int = 0,
 ) -> TimeSplit:
-    """Split a combined dataset into chronological train/validation/test sets."""
+    """Split a combined dataset into chronological train/validation/test sets.
+
+    ``purge_days`` (CURRENT_STATUS item 65): a row's 5-day label reads prices up
+    to ``purge_days`` trading days after its date, so the last train rows' labels
+    reach into validation (and the last validation rows' into test). With
+    ``purge_days=h`` the last ``h`` trade dates of train and of validation are
+    dropped. The default 0 keeps the original behavior exactly -- the frozen
+    daily model (items 46/47) is trained with 0 and must not change; use the
+    target horizon (``DEFAULT_TARGET_HORIZON``) from the next pre-registered
+    cycle on.
+    """
+    if purge_days < 0:
+        raise ValueError("purge_days must be >= 0.")
+
     if dataset.empty:
         raise ValueError("dataset must not be empty.")
 
@@ -252,6 +273,10 @@ def split_by_time(
     train = dataset.loc[train_mask].copy()
     validation = dataset.loc[validation_mask].copy()
     test = dataset.loc[test_mask].copy()
+
+    if purge_days:
+        train = _drop_last_dates(train, purge_days)
+        validation = _drop_last_dates(validation, purge_days)
 
     if train.empty:
         raise ValueError("Train split is empty.")

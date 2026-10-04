@@ -14,7 +14,8 @@ Before running
   3. Read the pre-registered follow-up table in CURRENT_STATUS item 53 BEFORE
      running -- what happens after each D2/I6 outcome is already decided there.
   The script stops before reading the forward period if the frozen model's
-  best_iteration is not 9 (item 53).
+  best_iteration is not 9 (item 53) or its tree fingerprint differs from
+  config/frozen_daily_model.json (item 65).
 
     STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 PYTHONPATH=. \\
         python scripts/evaluate_forward_holdout.py
@@ -28,10 +29,19 @@ Strategies (all top_n=10, same fees/tax/slippage)
 Pre-registered decisions (primary metric: daily rank IC vs the raw 5-day target)
   D2  daily track NOT REJECTED if IC(daily) > 0 on the forward period;
       otherwise rejected (no daily signal out of sample).
-  I6  overlay NOT REJECTED if IC(overlay) - IC(daily) > 0; then w = 0.5 is
-      carried into the production path. Otherwise the overlay is dropped.
+  I6  overlay NOT REJECTED if IC(overlay) - IC(daily) > 0. Otherwise the overlay
+      is dropped.
   Everything else -- beta-neutral IC, net/gross return, MDD, hit rate, turnover,
   excess over univ_ew, monthly IC -- is reported for interpretation only.
+
+Deployment (item 65, decided 2026-10-04 BEFORE any forward date was seen)
+  D2/I6 are computed and recorded exactly as pre-registered, but this forward look
+  alone never changes the production path: with SE(IC) ~ 0.06, a true IC of 0.02
+  passes "IC > 0" about 63% of the time and a true IC of 0 passes 50% of the time.
+  A "not rejected" overlay only becomes a forward2 candidate (the next >= 60
+  decision dates after this evaluation); it reaches the production path only if
+  forward2 points the same way. A rejection still drops the overlay / ends the
+  daily track as in item 53.
 
 Tie-break sensitivity (item 52, added 2026-09-28 before any forward date was seen)
   The frozen model (9 depth-2 trees) gives only ~8 distinct scores per date, so
@@ -42,6 +52,15 @@ Tie-break sensitivity (item 52, added 2026-09-28 before any forward date was see
   distribution is reported, with where the code-ascending result falls in it.
   Interpretation only -- NOT used by D2/I6. IC is unaffected (ties get average
   ranks), so the decisions cannot change.
+
+Rebalance-phase sensitivity (item 65, added 2026-10-04 before any forward date was seen)
+  The engine rebalances every 5 trading days starting from a fixed first date, so
+  the reported result is one of 5 possible schedules. daily and overlay are re-run
+  with the start shifted by PHASE_OFFSETS trading days; the spread is reported,
+  with the universe equal-weight return of the same schedule (it moves too:
+  W3 validation +43.5% ~ +78.6%), so excess is compared per offset.
+  Interpretation only -- NOT used by D2/I6 (IC is computed on every date and does
+  not depend on the schedule).
 
 Interpretation limit (item 46): ~60 decision dates are ~12 non-overlapping
 5-day periods, SE(mean IC) ~ 0.06. "Not rejected" is the strongest possible
@@ -73,6 +92,8 @@ from scripts.run_ml_backtest import (
     TOP_N,
     _load_priced_dataset,
     _to_data_by_stock,
+    expected_frozen_model,
+    frozen_model_fingerprint,
     trading_calendar,
     train_frozen_model,
 )
@@ -91,6 +112,7 @@ MIN_INTRADAY_COVERAGE = 0.80  # below this the overlay is mostly the daily score
 STRATEGY_COLS = (("daily", "score_w0.0"), ("overlay", f"score_w{OVERLAY_W}"))
 TIE_PERMUTATIONS = 20  # item 52, fixed before the forward look
 TIE_SEED = 20260928
+PHASE_OFFSETS = (0, 1, 2, 3, 4)  # item 65, fixed before the forward look; 0 = reported schedule
 EXPECTED_BEST_ITERATION = 9  # item 53: a different frozen model is not the pre-registered one -> stop
 
 
@@ -136,8 +158,9 @@ def verdicts(res: pd.DataFrame, coverage: float = 1.0) -> dict[str, object]:
 
     i6_status: "not_rejected" / "rejected", or "withheld" when intraday coverage
     is below MIN_INTRADAY_COVERAGE (missing bars make overlay == daily, pulling
-    the IC difference toward 0). overlay_deploy needs D2 AND I6 not rejected
-    AND enough coverage -- the overlay is 2/3 daily score by weight.
+    the IC difference toward 0). overlay_forward2_candidate needs D2 AND I6 not
+    rejected AND enough coverage -- the overlay is 2/3 daily score by weight. It
+    is a candidate for forward2, not a deployment (item 65).
     """
     ic = res.set_index("strategy")["ic"]
     diff = float(ic["overlay"] - ic["daily"])
@@ -151,13 +174,22 @@ def verdicts(res: pd.DataFrame, coverage: float = 1.0) -> dict[str, object]:
         "i6_not_rejected": i6,
         "intraday_coverage": float(coverage),
         "i6_status": ("not_rejected" if i6 else "rejected") if enough else "withheld",
-        "overlay_deploy": d2 and i6 and enough,
+        "overlay_forward2_candidate": d2 and i6 and enough,
     }
 
 
-def frozen_model_ok(best_iteration: int) -> bool:
-    """The forward look is valid only for the pre-registered frozen model (item 53)."""
-    return int(best_iteration) == EXPECTED_BEST_ITERATION
+def frozen_model_ok(best_iteration: int, fingerprint: str, expected: dict | None = None) -> bool:
+    """The forward look is valid only for the pre-registered frozen model (items 53/65).
+
+    Both the round count and the tree fingerprint recorded in
+    config/frozen_daily_model.json must match; best_iteration alone could coincide
+    for a different model.
+    """
+    expected = expected if expected is not None else expected_frozen_model()
+    return (
+        int(best_iteration) == EXPECTED_BEST_ITERATION == int(expected["best_iteration"])
+        and fingerprint == expected["fingerprint"]
+    )
 
 
 def tie_orders(codes: list[str], n: int = TIE_PERMUTATIONS, seed: int = TIE_SEED) -> list[list[str]]:
@@ -225,6 +257,40 @@ def summarize_ties(
     return pd.DataFrame(rows)
 
 
+def phase_offset_part(part: pd.DataFrame, offset: int) -> pd.DataFrame:
+    """``part`` without its first ``offset`` trading dates: shifts the 5-day rebalance schedule."""
+    dates = sorted(pd.to_datetime(part["trade_date"]).unique())
+    if offset >= len(dates):
+        return part.iloc[0:0]
+    return part[pd.to_datetime(part["trade_date"]) >= dates[offset]]
+
+
+def phase_sensitivity(
+    part: pd.DataFrame,
+    strategies: tuple[tuple[str, str], ...] = STRATEGY_COLS,
+    offsets: tuple[int, ...] = PHASE_OFFSETS,
+) -> pd.DataFrame:
+    """Net results of each buffered strategy for every rebalance start offset (item 65)."""
+    part = part.dropna(subset=["target_return_5d"])
+    rows = []
+    for name, col in strategies:
+        for k in offsets:
+            sub = phase_offset_part(part, k)
+            scores = sub[["trade_date", "stock_code", col]].rename(columns={col: "predicted_return"})
+            net, turnover = run_buffered_backtest_with_turnover(
+                _to_data_by_stock(sub), BUFFERED_CONFIG, score_fn=make_model_score_fn(scores), top_n=TOP_N
+            )
+            perf = calculate_performance(net)
+            univ = float((1.0 + universe_average_gross(_to_data_by_stock(sub))).prod() - 1.0)
+            rows.append({"strategy": name, "offset": k, "start": pd.to_datetime(sub["trade_date"]).min(),
+                         "periods": int(perf["period_count"]), "net_cum": perf["total_return"],
+                         "mdd": perf["max_drawdown"], "hit": perf["win_rate"],
+                         "entries": turnover["entries_per_period"],
+                         # the long-only bar moves with the schedule too, so compare per offset
+                         "univ_ew_gross": univ, "excess_vs_univ": perf["total_return"] - univ})
+    return pd.DataFrame(rows)
+
+
 def monthly_ic(ics: dict[str, pd.Series]) -> pd.DataFrame:
     return pd.DataFrame({k: v.groupby(v.index.to_period("M")).mean() for k, v in ics.items()})
 
@@ -238,8 +304,10 @@ def main() -> None:
 
     dataset = add_beta(_load_priced_dataset())
     trained, _ = train_frozen_model(dataset)
-    print(f"frozen daily model: best_iteration={trained.best_iteration} (expected {EXPECTED_BEST_ITERATION})")
-    if not frozen_model_ok(trained.best_iteration):
+    fingerprint = frozen_model_fingerprint(trained)
+    print(f"frozen daily model: best_iteration={trained.best_iteration} (expected {EXPECTED_BEST_ITERATION}), "
+          f"fingerprint {fingerprint[:16]}... (expected {expected_frozen_model()['fingerprint'][:16]}...)")
+    if not frozen_model_ok(trained.best_iteration, fingerprint):
         print("STOP: this is not the pre-registered frozen model (library version or data changed). "
               "Fix the environment first -- the forward period was NOT read, so the one look is not spent.")
         return
@@ -264,6 +332,7 @@ def main() -> None:
     v = verdicts(res, cov)
     sens = tie_sensitivity(part)
     ties = summarize_ties(sens, res, part)
+    phases = phase_sensitivity(part)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -272,6 +341,7 @@ def main() -> None:
     monthly.to_csv(out / "forward_monthly_ic.csv", encoding="utf-8-sig")
     sens.to_csv(out / "forward_tie_permutations.csv", index=False, encoding="utf-8-sig")
     ties.to_csv(out / "forward_tie_sensitivity.csv", index=False, encoding="utf-8-sig")
+    phases.to_csv(out / "forward_phase_sensitivity.csv", index=False, encoding="utf-8-sig")
 
     print("\n" + "=" * 112)
     print(f"FORWARD HOLDOUT (once)   top_n={TOP_N}, buffer={BUFFER_MULTIPLIER}, overlay w={OVERLAY_W}, "
@@ -284,6 +354,9 @@ def main() -> None:
     print(f"\ntie-break sensitivity (info only, not used by D2/I6): net_cum over {TIE_PERMUTATIONS} random "
           f"stock orders (seed {TIE_SEED}); code_asc = the reported rule")
     print(ties.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    print(f"\nrebalance-phase sensitivity (info only, not used by D2/I6): start shifted by {list(PHASE_OFFSETS)} "
+          "trading days; offset 0 = the reported schedule")
+    print(phases.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
 
     print("\n" + "=" * 112)
     print("PRE-REGISTERED DECISIONS")
@@ -297,14 +370,15 @@ def main() -> None:
                     "retest next cycle",
     }[v["i6_status"]]
     print(f"I6  IC(overlay) - IC(daily) = {v['ic_diff']:+.4f}  -> {i6_text}")
-    print("DEPLOY (item 53): " + ("daily + overlay w=0.5" if v["overlay_deploy"]
+    print("PRODUCTION PATH (item 65): unchanged by this look alone -- forward2 must point the same way.")
+    print("FORWARD2 CANDIDATE: " + ("daily + overlay w=0.5" if v["overlay_forward2_candidate"]
           else "daily only" if v["d2_not_rejected"] else "nothing -- see CURRENT_STATUS item 53 case C/D"))
     print("Limit: ~12 non-overlapping 5-day periods, SE(IC) ~ 0.06 -- 'not rejected' is not proof.")
 
     recorder = RunRecorder("forward_holdout", meta={
         "script": "scripts/evaluate_forward_holdout.py", "top_n": TOP_N, "buffer": BUFFER_MULTIPLIER,
         "overlay_w": OVERLAY_W, "best_iteration": trained.best_iteration, **v,
-        "tie_permutations": TIE_PERMUTATIONS, "tie_seed": TIE_SEED,
+        "tie_permutations": TIE_PERMUTATIONS, "tie_seed": TIE_SEED, "phase_offsets": list(PHASE_OFFSETS),
     })
     for name, t in trades.items():
         recorder.add_trades("forward", name, t)
@@ -312,7 +386,8 @@ def main() -> None:
         recorder.add_ic("forward", name, ic)
     recorder.save()
     print(f"\nsaved: {out / 'forward_results.csv'}, {out / 'forward_monthly_ic.csv'}, "
-          f"{out / 'forward_tie_sensitivity.csv'}, {out / 'forward_tie_permutations.csv'}")
+          f"{out / 'forward_tie_sensitivity.csv'}, {out / 'forward_tie_permutations.csv'}, "
+          f"{out / 'forward_phase_sensitivity.csv'}")
 
 
 if __name__ == "__main__":
