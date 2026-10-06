@@ -46,7 +46,7 @@ day = st.sidebar.selectbox("판단일", dates, format_func=lambda d: f"{d[:4]}-{
 saved = vd.load_profile(PROFILE_PATH)
 if saved and not saved["eligible"]:
     st.title("StockLens 분석가 패널")
-    st.warning("저장된 투자성향 진단 결과가 '추천 불가'입니다. 이 전략은 지금 상황에 맞지 않아 추천을 보여주지 않습니다.\n\n"
+    st.warning("저장된 투자성향 진단 결과가 '제공 불가'입니다. 이 전략은 지금 상황에 맞지 않아 모델 참고 순위를 보여주지 않습니다.\n\n"
                "다시 진단: `PYTHONPATH=. .venv/bin/python scripts/survey.py`")
     st.stop()
 saved_profile = (saved or {}).get("profile") or "neutral"
@@ -55,7 +55,7 @@ profile = st.sidebar.selectbox(
     "참고 박스 순서 기준 성향", profiles, index=profiles.index(saved_profile),
     format_func=lambda p: vd.PROFILE_LABELS[p] + (" (설문 결과)" if saved and p == saved_profile else ""),
 )
-st.sidebar.caption("성향은 종목별 참고 박스의 순서만 바꿉니다. 추천 순위는 바꾸지 않습니다 (AGENTS 43.6).")
+st.sidebar.caption("성향은 종목별 참고 박스의 순서만 바꿉니다. 모델 순위는 바꾸지 않습니다 (AGENTS 43.6).")
 
 cards = vd.load_day(day, CARDS_ROOT)
 rows = vd.ranking_rows(cards)
@@ -65,7 +65,7 @@ status = vd.day_status(cards)
 st.title("StockLens 분석가 패널")
 st.caption(f"판단일 {day[:4]}-{day[4:6]}-{day[6:]} 종가 기준 · 다음 거래일 시가 진입 · 5거래일 보유 · "
            f"KOSPI200 시총 상위 {rows[0]['n_stocks'] if rows else '?'}종목")
-banner = f"**{status['validation_status']}** · {status['disclaimer']}"
+banner = f"**{vd.RANK_LABEL}** — {vd.REFERENCE_RANK_NOTICE}"  # item 77: one wording for every screen
 if status["fingerprint_match"] is False:
     banner += " · ⚠ 고정 모델 지문 불일치 — 기록된 모델과 다른 모델의 순위입니다."
 st.warning(banner)

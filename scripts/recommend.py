@@ -79,6 +79,7 @@ from scripts.run_ml_backtest import (
     frozen_model_matches,
     train_frozen_model,
 )
+from src.analysts.notices import RANK_LABEL, REFERENCE_RANK_NOTICE
 from src.analysts.quant import build_quant_card, write_quant_card
 from src.data.session import intraday_bar_error
 from src.data.storage import HistoricalStorage
@@ -325,7 +326,7 @@ def main() -> None:
 
     warn = staleness_warning(date)
     print("=" * 78)
-    print(f"StockLens 추천 — 판단일 {date.date()} 종가 기준, 다음 거래일 시가 진입 · 5거래일 보유")
+    print(f"StockLens {RANK_LABEL} — 판단일 {date.date()} 종가 기준, 다음 거래일 시가 진입 · 5거래일 보유")
     print(f"고정 daily 모델(best_iteration={trained.best_iteration}), {n}종목 중 상위 {len(picks)}")
     print(f"투자성향: {PROFILE_LABELS[args.profile]}({args.profile})"
           + ("" if args.profile == "neutral" else f", 성향 반영 강도 λ={lam:.3f} (모델 순위와의 상관 0.8 유지)"))
@@ -384,7 +385,7 @@ def main() -> None:
     else:
         print("전략과의 차이: 이 목록은 성향을 반영한 그날 순위입니다. 평가 대상 전략(중립, buffer 3.0)의 보유 종목은 "
               "중립 실행에서 확인하세요(항목 66).")
-    print("검증 상태: 이 모델의 표본 밖 성과 확인은 2027년 1월 forward 평가 전까지 미완료입니다. 투자 권유가 아닙니다.")
+    print("검증 상태: " + REFERENCE_RANK_NOTICE)  # item 77
 
     for code, r in day.sort_values("rank").iterrows():
         top3 = contribs.loc[code].drop("bias").abs().sort_values(ascending=False).index[:3]

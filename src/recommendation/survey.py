@@ -96,8 +96,9 @@ QUESTION_BY_KEY = {q.key: q for q in QUESTIONS}
 
 RISK_NOTICE = (
     "이 서비스는 KOSPI 대형주 50종목 중 모델 점수 상위 10종목을 다음 거래일 시가에 사서 "
-    "5거래일 보유하는 단기 전략입니다. 과거 검증 구간에서 최대 낙폭(MDD)은 −20%~−44%였고, "
-    "표본 밖 성과 확인(forward 평가)은 아직 끝나지 않았습니다. 투자 권유가 아닙니다."
+    "5거래일 보유하는 단기 전략의 모델 참고 순위입니다. 과거 검증 구간에서 최대 낙폭(MDD)은 −20%~−44%였고, "
+    "표본 밖 성과는 아직 확인되지 않았으며(1차 확인 2027년 1월), 최근 검증 구간에서는 시장 평균보다 낮았습니다. "
+    "투자 권유가 아닙니다."
 )
 WARNING_TEXT = (
     "선택하신 최대 손실은 10%입니다. 이 서비스의 과거 검증 구간에서 가장 안정적인 성향(안정형)도 "
@@ -106,9 +107,9 @@ WARNING_TEXT = (
 )
 PROFILE_LABELS = {"conservative": "안정형", "neutral": "중립형", "aggressive": "공격형"}
 PROFILE_MEANING = {
-    "conservative": "변동성이 작은 종목 쪽으로 기울인 추천입니다. 수익 변동은 줄지만 손실이 작다는 보장은 없습니다.",
-    "neutral": "모델 순위를 그대로 따르는 추천입니다.",
-    "aggressive": "변동성이 크고 거래량이 이례적으로 많은 종목 쪽으로 기울인 추천입니다. "
+    "conservative": "변동성이 작은 종목 쪽으로 기울인 순위입니다. 수익 변동은 줄지만 손실이 작다는 보장은 없습니다.",
+    "neutral": "모델 순위를 그대로 따르는 순위입니다.",
+    "aggressive": "변동성이 크고 거래량이 이례적으로 많은 종목 쪽으로 기울인 순위입니다. "
                   "검증에서 모델 신호 여유가 가장 작았던 성향입니다.",
 }
 
@@ -192,7 +193,7 @@ def evaluate(answers: dict[str, int], warning_acknowledged: bool | None = None, 
 
 def explain(result: SurveyResult) -> str:
     if not result.eligible:
-        lines = ["진단 결과: 현재 응답 기준으로는 이 서비스의 추천을 제공하지 않습니다.", "이유:"]
+        lines = ["진단 결과: 현재 응답 기준으로는 이 서비스의 모델 참고 순위를 제공하지 않습니다.", "이유:"]
         lines += [f"  - {r}" for r in result.reasons]
         lines.append("단기 주식 전략은 짧은 기간에 큰 손실이 날 수 있어, 위 조건에서는 적합하지 않습니다.")
         return "\n".join(lines)

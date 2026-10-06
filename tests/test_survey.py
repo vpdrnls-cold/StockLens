@@ -88,4 +88,4 @@ def test_save_load_roundtrip_and_version(tmp_path):
 def test_explain_mentions_numbers_and_limits():
     text = sv.explain(sv.evaluate(A(4, 4, 3, 2, 2, 4)))
     assert "안정형" in text and "손실이 작다는 보장은 없습니다" in text
-    assert "추천을 제공하지 않습니다" in sv.explain(sv.evaluate(A(1, 4, 5, 4, 4, 4)))
+    assert "모델 참고 순위를 제공하지 않습니다" in sv.explain(sv.evaluate(A(1, 4, 5, 4, 4, 4)))

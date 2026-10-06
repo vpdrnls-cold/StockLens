@@ -27,7 +27,7 @@ from src.explanation.model_attribution import FEATURE_LABELS, format_feature_val
 SCHEMA_VERSION = 1
 SCORE_NOTE = "5일 뒤 수익률 순위에 대한 모델의 상대 점수 — 예상 수익률(%) 아님"
 TIE_RULE = "점수 동점이면 종목코드 오름차순"
-VALIDATION_STATUS = "forward 평가(2027-01) 전 — 표본 밖 성과 미확인"
+VALIDATION_STATUS = "모델 참고 순위 — 표본 밖 성과 미확인(1차 확인 2027-01), 최근 검증 구간에서 시장 평균보다 낮았음"  # item 77
 NOT_ADVICE = "투자 권유 아님"
 DEFAULT_OUT_ROOT = Path("reports/analyst_cards")
 

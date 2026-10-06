@@ -93,7 +93,7 @@ def main() -> int:
         path = save(result, Path(args.out))
         print(f"\n저장: {path} (git에 올라가지 않음)")
         if result.eligible:
-            print("추천 받기: STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py --profile saved")
+            print("모델 참고 순위 보기: STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py --profile saved")
     return 0
 
 

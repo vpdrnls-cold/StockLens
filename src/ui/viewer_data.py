@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from src.analysts.chart import SPEC_BY_KEY, render_text
+from src.analysts.notices import RANK_LABEL, REFERENCE_RANK_NOTICE
 
 CARDS_ROOT = Path("reports/analyst_cards")
 PROFILE_PATH = Path("data/user_profile.json")
@@ -39,7 +40,7 @@ BOX_TITLES = {
     "market": "시장 전문가",
     "disclosure": "공시·뉴스 전문가",
 }
-LAYER_LABELS = {"recommendation": "추천", "reference": "참고 · 모델 미사용 · 추천 이유 아님"}
+LAYER_LABELS = {"recommendation": RANK_LABEL, "reference": "참고 · 모델 미사용 · 순위 근거 아님"}  # item 77
 CARD_KINDS = ("quant", "chart", "disclosure", "news")
 PROFILE_LABELS = {"conservative": "안정형", "neutral": "중립형", "aggressive": "공격형"}
 VERDICT_LABELS = {
