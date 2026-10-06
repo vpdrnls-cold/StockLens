@@ -156,3 +156,5 @@ def test_phase_zero_reproduces_the_reported_schedule(monkeypatch) -> None:
     assert phases.loc[phases["offset"] == 0, "net_cum"].iloc[0] == reported
     row = phases.iloc[0]
     assert row["excess_vs_univ"] == row["net_cum"] - row["univ_ew_gross"]
+    # item 80: daily mark-to-market drawdown is reported and never shallower than the period-end one
+    assert (phases["mdd_daily"] <= phases["mdd"] + 1e-12).all()

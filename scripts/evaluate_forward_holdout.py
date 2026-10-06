@@ -62,6 +62,11 @@ Rebalance-phase sensitivity (item 65, added 2026-10-04 before any forward date w
   Interpretation only -- NOT used by D2/I6 (IC is computed on every date and does
   not depend on the schedule).
 
+Daily drawdown (item 80, added 2026-10-06 before any forward date was seen)
+  ``mdd_daily`` marks the buffered strategies to market every trading day
+  (src/backtest/daily_equity.py); ``mdd`` stays the engine's period-end value.
+  Interpretation only -- NOT used by D2/I6.
+
 Interpretation limit (item 46): ~60 decision dates are ~12 non-overlapping
 5-day periods, SE(mean IC) ~ 0.06. "Not rejected" is the strongest possible
 conclusion; nothing here proves an improvement, and results are limited to
@@ -100,6 +105,7 @@ from scripts.run_ml_backtest import (
 from scripts.walk_forward_backtest_compare import universe_average_gross
 from src.backtest.baseline import calculate_performance, calculate_score, run_baseline_backtest
 from src.backtest.buffered import run_buffered_backtest_with_turnover
+from src.backtest.daily_equity import daily_max_drawdown
 from src.data.intraday_split import FORWARD_MIN_DATES, IntradaySplitError, select_segment
 from src.eval.test_lock import TestSetLockedError
 from src.ml.cross_section import daily_rank_ic, summarize_ic
@@ -137,7 +143,8 @@ def evaluate(part: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
         rows.append({
             "strategy": name, "ic": s.mean_ic, "ic_pos": s.pct_pos, "ic_bn": s_bn.mean_ic, "days": s.n_days,
             "net_cum": perf["total_return"], "gross_cum": calculate_performance(gross)["total_return"],
-            "mdd": perf["max_drawdown"], "hit": perf["win_rate"], "periods": int(perf["period_count"]),
+            "mdd": perf["max_drawdown"], "mdd_daily": daily_max_drawdown(net, data_by_stock),
+            "hit": perf["win_rate"], "periods": int(perf["period_count"]),
             "entries": turnover["entries_per_period"],
         })
         trades[name], ics[name] = net, ic
@@ -284,7 +291,8 @@ def phase_sensitivity(
             univ = float((1.0 + universe_average_gross(_to_data_by_stock(sub))).prod() - 1.0)
             rows.append({"strategy": name, "offset": k, "start": pd.to_datetime(sub["trade_date"]).min(),
                          "periods": int(perf["period_count"]), "net_cum": perf["total_return"],
-                         "mdd": perf["max_drawdown"], "hit": perf["win_rate"],
+                         "mdd": perf["max_drawdown"], "mdd_daily": daily_max_drawdown(net, _to_data_by_stock(sub)),
+                         "hit": perf["win_rate"],
                          "entries": turnover["entries_per_period"],
                          # the long-only bar moves with the schedule too, so compare per offset
                          "univ_ew_gross": univ, "excess_vs_univ": perf["total_return"] - univ})
