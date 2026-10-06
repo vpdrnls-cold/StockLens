@@ -216,3 +216,7 @@ data/processed/macro/
 
 # Item 75: news headlines (collected nightly; cannot be re-fetched for past dates)
 data/processed/news/
+
+# Item 82: last-seen daily bars per stock for the adjusted-price monitor (Kiwoom prices,
+# public repo). The event log reports/price_adjustments/events.csv (ratios/dates only) IS committed.
+data/processed/price_snapshots/

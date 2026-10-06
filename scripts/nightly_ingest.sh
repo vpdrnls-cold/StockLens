@@ -11,6 +11,8 @@
 # What it does (after 20:00 KST, when the after-market session has closed):
 #   1. minute bars (ka10080, 15-min) for the top50 universe, last 10 days
 #   2. daily bars (ka10081) for the top50 universe -- FRIDAYS ONLY by default
+#   2b. right after 2: adjusted-price change monitor (item 82) -- compares past bars
+#      with the last snapshot and logs recalculations; exit 4 = change logged, not a failure
 #   3. index bars (ka20006: KOSPI, KOSPI200) + investor flows (ka10059) for
 #      the universe, incremental (last 10 days, ~52 calls). Re-fetching 10 days
 #      lets a later final value replace an earlier one (items 58/64).
@@ -76,6 +78,15 @@ status=0
   if [[ "$daily" == "1" ]]; then
     echo "--- [2/5] daily bars (ka10081, full adjusted history) ---"
     STOCKLENS_UNIVERSE="$COLLECT" "$PYTHON" scripts/ingest_kiwoom_daily_chart_batch.py || status=1
+    echo "--- [2b/5] adjusted-price change monitor (item 82, watch only) ---"
+    STOCKLENS_UNIVERSE="$COLLECT" "$PYTHON" scripts/monitor_price_adjustments.py --summary-only
+    rc=$?
+    if [[ $rc -eq 4 ]]; then
+      # item 82: a past-price change was detected and logged -> not a failure
+      echo "price monitor: change recorded (reports/price_adjustments/events.csv)"
+    elif [[ $rc -ne 0 ]]; then
+      status=1
+    fi
   else
     echo "--- [2/5] daily bars skipped (Fridays only; STOCKLENS_NIGHTLY_DAILY=1 to force) ---"
   fi
