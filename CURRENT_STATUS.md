@@ -1058,4 +1058,178 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과�
   - [x] (e) git: 추가 종목의 processed 파일은 레포에 올리지 않음(.gitignore), top50 historical은 기존대로 — `.gitignore`에 추가 종목 historical 149개 명시(035720은 이미 추적 중이라 제외). index/investor_flow 폴더(약 560MB, API로 재수집 가능)는 `.gitignore`에 추가해 레포에 올리지 않음(2026-10-04)
   - [x] (f) 전체 테스트, 운용 경로 MATCH·지문 MATCH 재확인, 문서 — 335개 통과, `run_ml_backtest.py` MATCH(+65.0% / −2.2%)·지문 MATCH. **분봉 폴더 200종목 상태에서 dev 재현**: 원본 재구성 vs 저장 패널 실행 차이 5e-16(추가 종목 영향 0). 기존 `dev_results.csv`와는 6.3e-8 차이가 있으나 저장 패널로 돌려도 같은 값 → 이번 변경과 무관(그 사이 일봉 갱신, 예: 207940 수정주가 재계산·항목 62로 추정), IC 판정과 무관한 크기.
 - **018880 일봉 — 재훈 결정(2026-10-04): 선택지 (2) 적용.** `LEGACY_OHLC_TOLERANCE_BEFORE = date.fromisoformat(TRAIN_START_DATE)`(2002-10-29, `src/data/dataset.py` 단일 출처에서 import). 테스트 1개(기준일 = 학습 시작일, 2001-12-18 봉은 버리고 2002-10-29 봉은 여전히 거부), 336개 통과, `run_ml_backtest.py` MATCH·지문 MATCH. 저장 데이터는 다음 수집부터만 영향(top50·지수는 2000년 이후 불일치 봉이 없어 동일). 018880 재수집은 재훈 터미널에서. 아래는 결정 전 기록 — 선택지 (1) 그대로 둠: 이번 사이클에서 쓰지 않는 종목이라 영향 없음, 대신 매주 금요일 야간 일봉 단계가 이 종목 실패로 `status=1`을 남김. (2) `LEGACY_OHLC_TOLERANCE_BEFORE`를 학습 시작일(2002-10-29, `TRAIN_START_DATE`)로 옮김: 모델이 쓰지 않는 구간의 불일치 봉만 버리는 같은 원칙(항목 29). top50은 2000~2002년에 불일치 봉이 없어(엄격 검증 통과) 저장 데이터·고정 모델 불변 — 단 018880에 2002-10-29 이후 불일치가 더 있으면 여전히 실패. 재훈 결정 대기.
+- **018880 재수집 (2026-10-04, 재훈 터미널)**: 기준일 변경 후 `ingest_kiwoom_daily_chart_batch.py 018880` → 성공, 1996-07-31~2026-10-02 7,547봉. 이로써 일봉 200/200. (`.gitignore` 대상이라 레포에는 없음.) 항목 65~68은 커밋 `ee63aee`로 push됨.
 
+69. **퀀트 카드 JSON 출력 (2026-10-05) — 모델·전략 변경 없음 (제품 레이어, 실험 아님)**
+
+- **목적**: AGENTS.md 43절 1단계 "Quant + Chart 카드" 중 퀀트 카드를 JSON으로 남김. 차트 카드(`src/analysts/chart.py`, `<code>_chart.json`)는 이미 있음. 나중에 Streamlit 뷰어가 이 JSON들만 읽도록 하려는 것(뷰어는 이번 범위 아님).
+- **구현**: `src/analysts/quant.py` — `build_quant_card(...)`(순수 함수: 학습·예측·파일 IO 없음, `recommend.py`가 이미 계산한 값만 배치), `write_quant_card(card, out_root)` → `reports/analyst_cards/<YYYYMMDD>/<code>_quant.json`(`ensure_ascii=False, indent=1, allow_nan=False`). `scripts/recommend.py`: 중립 + 저장 실행일 때만 그날 점수가 매겨진 전 종목(약 50개)의 카드를 씀(`should_write_cards(profile, no_save)`), `--cards-out`(기본 `reports/analyst_cards`), 저장 후 "카드 저장: … (N개)" 한 줄.
+- **JSON 스키마 v1**: 공통 키 `card`("quant"), `layer`("recommendation"), `used_by_model`(true), `stock_code`, `name`, `decision_date`(ISO) / `schema_version` / `model`{`best_iteration`, `fingerprint_match`} / `ranking`{`rank`, `n_stocks`, `percentile`, `score`, `score_note`(예상 수익률 % 아님), `tie_size`, `tied`, `tie_rule`(점수 동점이면 종목코드 오름차순)} / `drivers`[전 feature: `feature`, `label`, `value`, `value_text`(`format_feature_value`), `contribution`, |기여| 내림차순 — 앞 3개가 top3] / `bias` / `shap_check`{`sum_minus_score`} / `strategy`{`held_buffered`, `status`(유지/신규/null), `rule`} / `validation_status`(forward 평가(2027-01) 전 — 표본 밖 성과 미확인) / `disclaimer`(투자 권유 아님). NaN·inf → null.
+- **중립만 쓰는 이유**: 카드는 모델 순위 = 추천 층의 기록. 프로필 실행은 순위가 성향 기울기로 바뀌므로 카드를 쓰지 않음.
+- **바꾸지 않은 것**: 콘솔 출력·rows·`reports/daily_picks` CSV 저장 코드(변경 줄은 지문 검사 조건 1줄 — 같은 조건을 `model_ok` 변수로 담아 카드에 기록, 출력 동일), 고정 모델, 순위·동점 규칙, buffer 로직, requirements.
+- **순서**: 카드 쓰기는 장중 가드 → TreeSHAP 합 검사(1e-4, 실패 시 중단) → (지문 검사, 경고만) → 콘솔 출력·CSV 저장 이후. 지문 불일치는 실행을 막지 않고 카드 `model.fingerprint_match=false`로 기록(기존 `recommend.py` 동작이 경고만이라 그대로 따름).
+- **테스트**: `tests/test_analyst_quant.py` 6개(공통 키·층, 기여합+bias = 점수·정렬·전 feature, NaN/inf → null·엄격 JSON, 동점·보유 없음, 저장·재로딩(tmp_path), 카드 쓰기 조건). 전체 336 → **342개 통과**.
+- **미확인**: 실제 `recommend.py` 실행 경로(카드 쓰기 블록)는 돌리지 않음(재훈이 직접 실행 — 페이퍼 로그를 만들지 않기 위해). 블록은 위 순수 함수와 조건 함수만 테스트됨.
+- **다음 단계**: Streamlit 뷰어(퀀트·차트 카드 JSON 읽기만). **`.venv`에 streamlit 설치 금지** — requirements 고정·트리 지문 때문. 별도 venv에서 실행. 뷰어 조건은 앞서 합의한 것(forward 구간 실현 수익 표시 금지, 검증 상태 배너, UI에서 재계산 금지)을 항목 70으로 기록 후 진행.
+
+
+70. **Streamlit 분석가 패널 뷰어 1차 (2026-10-05, 재훈 결정: 50종목 전부·전문가는 탭) — 모델·전략 변경 없음 (제품 레이어)**
+
+- **목적**: AGENTS.md 43.8 5단계 "Web UI: simple first (Streamlit) reading the per-stock JSON". 항목 61의 아이디어(종목을 고르면 전문가별 분석을 클릭해서 봄)를 퀀트·차트 카드 JSON 위에 구현.
+- **고정 조건 (만들기 전)**:
+  1. 읽기 전용: `reports/analyst_cards/<T>/<code>_{quant,chart}.json`과 `data/user_profile.json`만 읽음. 점수·순위·보유를 다시 계산하지 않음.
+  2. **forward 성과 비노출**: 가격·수익률·손익·백테스트를 읽거나 계산하지 않음(가격 파일 미접근을 테스트로 고정). 페이퍼 로그의 forward 구간 성과를 화면에서 보지 않게 하기 위함.
+  3. 검증 상태 배너 상시 표시(퀀트 카드의 `validation_status`, `disclaimer`).
+  4. 두 층 분리(AGENTS 43.1): 퀀트 탭 = 추천 층, 차트·시장·공시 탭 = "참고 정보 — 모델 미사용" 라벨. 종합 점수 없음, 의견 충돌은 그대로(43.5).
+  5. 설문 성향은 참고 탭 순서만 바꿈(43.6): 공격형 차트 먼저, 안정형 시장·공시 먼저. 퀀트 탭은 항상 첫 번째.
+  6. 개인·로컬 사용(43.7). 공개 배포는 규제 확인 전 금지.
+  7. 환경: Streamlit은 별도 venv(`.venv-ui`)에만. `.venv`(고정 모델 환경, requirements 고정)는 건드리지 않음.
+- **구성**: 데이터 로직 `src/ui/viewer_data.py`(Streamlit import 없음, `.venv`에서 테스트), 화면 `app/viewer.py`(얇은 Streamlit), 차트 카드 50종목은 `chart_card.py --from-picks 50`(야간 수집 5단계에 추가).
+- **체크리스트**:
+  - [x] viewer_data + 테스트(카드 로드, 보유·상위 목록, 성향별 탭 순서, 가격 데이터 미접근) — `src/ui/viewer_data.py`, `tests/test_ui_viewer_data.py` 8개(가격·수익률·백테스트·페이퍼 로그 관련 이름이 뷰어 코드에 없음을 검사)
+  - [x] app/viewer.py — 사이드바(판단일, 성향 = 참고 탭 순서만), 배너(검증 상태·투자 권유 아님·지문 불일치 경고), 전략 보유 종목(유지/신규)·모델 순위 상위 10(동점 표시), 전 종목 선택 → 탭 4개(퀀트=추천 / 차트·시장·공시=참고, "모델 미사용" 라벨). 시장·공시 탭은 "준비 중". 설문 결과가 추천 불가면 추천을 보여주지 않음(항목 57). `STOCKLENS_CARDS_ROOT` 환경변수는 시험용
+  - [x] 야간 수집에 차트 카드 50종목 — `nightly_ingest.sh` 5단계: `recommend.py` 다음 `chart_card.py --from-picks 50`
+  - [x] `.venv-ui` 설정 방법·실행 명령, `.gitignore` — `requirements-ui.txt`(streamlit, python-dotenv 1.2.3, requests: `chart.py` → `src.data` 패키지 → API 클라이언트 모듈 import 때문, 호출·키 로딩 없음). 설치 확인: streamlit 1.65.0, `.venv`는 requirements와 그대로 일치(streamlit 없음)
+  - [x] 전체 테스트, 문서 — 351개 통과. 헤드리스 확인(`streamlit.testing.v1.AppTest`, 합성 퀀트 카드 3개 + 실제 차트 카드 1개): 예외 없음, 탭 4개, 종목 변경·안정형 탭 순서 정상. **부수 수정**: 항목 68에서 `normalization.py`가 `dataset.py`를 import해 생긴 순환 import(`import src.features.engineering`가 첫 import이면 실패)를 발견 → import 제거, 기준일 `date(2002, 10, 29)` + 기존 동일성 테스트로 단일 출처 유지, 새 프로세스 import 테스트 1개 추가
+- **레이아웃 변경: 탭 → "전문가 박스" (2026-10-05, 재훈 지시, UI만 — 모델·전략·카드 JSON 불변)**: 항목 61 원래 아이디어("전문가를 클릭하면 각자 분석")에 맞춤.
+  - 페이지 단위 **시장 전문가** 박스(종목과 무관한 환경 카드, 현재 "준비 중") → 보유/상위 10 목록 → 종목 선택 → 종목별 박스 가로 배치(`st.columns` + `st.container(border=True)`): **퀀트(추천)** 항상 첫 번째, **차트·공시/뉴스(참고)** 순서만 성향으로(공격형 차트 먼저, 안정형 공시 먼저 — AGENTS 43.6).
+  - 각 박스: 이름, 층 배지(파랑 "추천" / 회색 "참고 · 모델 미사용 · 추천 이유 아님"), 한 줄 요약, "자세히"(`st.expander`)에 기존 탭 내용 그대로. 배지 색은 층 구분만 — 판정 방향 색·종합 점수·"N명 긍정" 집계 없음(43.5).
+  - 요약 규칙(`src/ui/viewer_data.py` 순수 함수): `quant_summary`(카드 값 그대로 "순위 r / n · 백분위 · 전략 보유 상태"), `chart_summary`(판정별 개수만 — 특정 상태명 없음, 43.3), `not_built_summary`. `box_order`/`box_layer`가 `tab_order`를 대체(같은 의미: 퀀트 첫 번째, 성향은 참고 순서만), 시장은 `PAGE_BOXES`. 미사용 `REFERENCE_LABEL` 삭제.
+  - 테스트: 탭 순서 테스트 → 박스 순서 테스트로 교체(시장은 종목 박스에 없음, 층 구분 포함) + `chart_summary`(개수 합 = 상태 수, 상태명 미포함) + `quant_summary`(카드 숫자 일치) + 준비 중 박스. 뷰어 테스트 8 → 11, 전체 **354개 통과**.
+  - 헤드리스 확인(AppTest, 임시 폴더 샘플 카드 — `reports/` 미사용): 예외 없음, 탭 0·"자세히" 펼치기 2개, 박스 순서·배지, 안정형 순서, 차트 카드 없는 종목 모두 정상.
+- **미확인**: 실제 퀀트 카드(재훈의 `recommend.py` 실행 후)로 본 화면은 아직 없음. 첫 실행 뒤 `chart_card.py --from-picks 50`까지 돌리고 뷰어로 확인 필요.
+
+
+71. **`recommend.py` 페이퍼 로그 덮어쓰기 가드 + `--cards-only` (2026-10-05, 재훈 지시) — 모델·전략·순위 규칙 변경 없음 (실험 아님)**
+
+- **배경**: `recommend.py`가 `reports/daily_picks/<T>.csv`를 존재 확인 없이 씀. 일봉은 금요일에만 갱신되므로 주중에 카드용으로 돌리면 판단일이 직전 금요일(10/02)로 잡혀 페이퍼 로그(사전등록 전략의 기록)를 덮어씀. 뷰어(항목 70)용 카드를 로그 없이 만들 경로도 필요.
+- **확인 결과**: (1) `buffered_holdings()`는 **T 이전 로그만** 재생(`load_logged_rankings(before=T)`, `trade_date < T`) — T의 순위는 재계산 값. 그래서 `--cards-only`에서 재계산 순위가 로그와 같은지 검사하는 것이 의미 있음. (2) `20261002.csv`에는 `held_buffered` 열 **없음**(항목 66 이전 생성, 열: trade_date, rank, stock_code, name, score, tie_size, top_drivers, profile, personalized_score). `20260928.csv`는 profile 열도 없음.
+- **구현** (`scripts/recommend.py`, 순수 함수 + main은 호출만):
+  - 판단일 T와 장중 가드를 **학습 전으로** 옮김 → 중립·저장 실행에서 `<T>.csv`가 있으면 학습 전에 중단(종료 코드 **3**, 아무것도 안 씀, 강제 옵션 없음). 프로필 실행 동작은 그대로.
+  - `--cards-only`(중립 전용, `--profile`·`--no-save`와 같이 쓰면 종료 코드 **2**): CSV는 절대 쓰지 않고 퀀트 카드만. 장중 가드·TreeSHAP 검사·지문 검사는 그대로. `--date`와 함께 사용 가능. `<T>.csv`가 있으면 종목별 rank·score(허용 1e-9)·종목 구성(+로그에 있으면 held_buffered)을 비교 → 하나라도 다르면 카드를 쓰지 않고 종료 코드 **4**. 로그 없는 판단일은 경고 후 씀. 기존 카드를 덮어쓴 개수 출력.
+  - 함수: `cli_error`, `existing_log_path`, `log_exists_message`, `should_write_csv`, `should_write_cards(profile, no_save, cards_only)`, `compare_with_log(day, log, held) -> (차이 목록, held 비교 여부)`, `holdings_note`.
+  - 퀀트 카드: 선택 필드 `strategy.note`(`--cards-only`일 때만: "로그에 보유 기록 없음 — 이전 로그를 재생한 보유" / "페이퍼 로그 없는 판단일 — …" / "로그의 보유 기록과 일치"). `schema_version`은 1 유지, 뷰어는 있으면 상세에 표시(없어도 동작).
+  - `nightly_ingest.sh`: `recommend.py` 종료 코드 3 → 실패가 아니라 "recommend: skipped (log exists)", 차트 카드 단계는 그대로 실행.
+- **바꾸지 않은 것**: 고정 모델, 순위·동점 규칙, buffer 로직, CSV 컬럼·포맷, 기존 콘솔 문구(추가 줄만), 기존 `reports/daily_picks/` 파일.
+- **테스트**: `tests/test_recommend_log_guard.py` 8개(로그 있으면 **학습 전** 종료 코드 3·파일 불변 — 학습 함수가 호출되면 실패하도록 대체, 로그 없으면 통과, 옵션 조합 거부·종료 코드 2, CSV 쓰기 조건, 비교: 동일·1e-12 허용·rank/score/종목 구성 검출·held 열 유무, 야간 스크립트 분기 문자열) + `tests/test_analyst_quant.py` 1개(note 선택 필드). 전체 354 → **363개 통과**. 뷰어 헤드리스 예외 없음.
+- **미확인**: `--cards-only` 실제 실행(학습 포함 전체 경로)은 재훈이 직접 실행. 10/02 재계산 순위가 로그와 같은지는 그때 판정됨 — 그 사이 데이터 변경(예: 207940 수정주가 재계산, 항목 62)으로 점수가 달라지면 종료 코드 4가 정상 동작. 야간 스크립트의 종료 코드 분기는 문자열만 테스트(셸 실행 테스트 없음).
+- **실제 카드 확인 (2026-10-05, 읽기 전용 — 코드 변경 없음)**: 재훈이 `recommend.py --cards-only --date 2026-10-02`(exit 0)와 `chart_card.py --from-picks 50` 실행 후, 파일만 읽어 검증. 항목 70·71의 "미확인(실제 카드로 본 화면)" 닫음.
+
+  | # | 확인 | 결과 | 근거 |
+  |---|---|---|---|
+  | 1 | 카드 파일 | 통과 | `reports/analyst_cards/20261002/` 퀀트 50·차트 50, 퀀트 종목 집합 = `20261002.csv` 종목 집합, 차트 없는 종목 0 |
+  | 2 | 퀀트 카드 ↔ 로그 | 통과 | rank 불일치 0, score 불일치 0(최대 차이 9.4e-17), tie_size 불일치 0 |
+  | 3 | 카드 내부 정합 | 통과 | 기여합+bias−score 최대 1.56e-9(직접 재계산 = 카드 `shap_check`, 기준 1e-4), fingerprint_match 전부 true·best_iteration 9, `strategy.note` 50개 전부 "로그에 보유 기록 없음 — 이전 로그를 재생한 보유", 보유 정확히 10개, drivers 카드당 19개 |
+  | 4 | 보유 재생 일관성 | 통과 | 보유 = 1·2·3·4·5위(267250 신규, 000150 유지, 316140 신규, 000270 유지, 000810 신규) + 17·21·22·28·29위 유지(267260, 034020, 298040, 010140, 028260) — 항목 66 (c) 확인 실행과 동일. 매도 3종목은 카드에 이전 보유가 없어 카드로는 확인 불가(항목 66 출력: SK하이닉스·LS ELECTRIC·LIG디펜스앤에어로스페이스) |
+  | 5 | 뷰어 헤드리스(AppTest, 실제 카드 폴더, 실제 설문 = 중립·추천 가능) | 통과 | 예외 0, 판단일 목록 [2026-10-02], 보유 목록 10행·상위 10 목록 10행, 배너에 validation_status·disclaimer, 박스 순서 중립·공격형 퀀트→차트→공시 / 안정형 퀀트→공시→차트, 50종목 전부 순회 예외 0. 차트 카드 없는 종목 처리는 실제 데이터에 해당 종목이 없어 샘플 카드 시험(항목 70)으로만 확인 |
+  | 6 | 화면 문구 | 통과 | 퀀트 요약 = 카드 값 50/50, 차트 요약 판정별 개수만(상태명 없음) 50/50(서로 다른 요약 10종), `strategy.note` 상세 표시 50/50, 시장 박스 50/50 |
+
+72. **공시 전문가(공시 카드) 1차 — 설계 (2026-10-05, 만들기 전 고정) — 모델·전략 변경 없음 (제품 레이어, 참고 층)**
+
+- **목적**: AGENTS.md 43.8 2단계. 분석가 패널의 "공시·뉴스 전문가" 박스를 실제 내용으로(1차는 공시만, 뉴스는 키 발급 후). 43.2: "recent filings (OpenDART list, filtered by category, corrections flagged) ... original link. Summaries only".
+- **보여 줄 것**: 판단일 T 기준 최근 30일(달력일, T−29 ~ T) 공시 목록 — 종류별 개수, 정정 공시(`[기재정정]` 등 태그) 표시, 제출인, DART 원문 링크(`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=<접수번호>`). 박스 요약은 "최근 30일 공시 N건 · 정정 k건 · 종류 m개"처럼 개수만.
+- **보여 주지 않을 것**: 호재/악재·긍정/부정 판단(검증된 근거 없음, 43.1·43.5), 구조화 재무 수치(DART 재무 API는 point-in-time 아님, 항목 60), 공시 본문 요약(1차 범위 밖).
+- **시점**: 목록 API는 접수일만 있고 시각이 없음(항목 60) → 접수일 ≤ T. T 당일 공시가 장 마감 전인지 후인지 구분 불가 — 카드에 명시. 참고 정보라 모델·순위에 영향 없음.
+- **분류**: 항목 60의 분류 규칙을 그대로 쓰고, 카드에만 "증권 발행 서류"(증권발행실적보고서·투자설명서·일괄신고서 류 — 006800의 ELS 서류 등) 묶음을 앞에 추가. 조사 스크립트의 분류(항목 60 수치)는 바꾸지 않음. 종류별 표시 이름은 한국어 라벨.
+- **구조**:
+  1. `src/api/dart_client.py` — 목록(`list.json`, 연속 페이지)·회사코드(`corpCode.xml`) 호출. 키는 `.env` `DART_API_KEY`, 오류 메시지에서 키 제거(조사 스크립트와 같은 방식). 테스트는 네트워크 mock.
+  2. `src/analysts/disclosure.py` — 분류 규칙(조사 스크립트에서 이동, 조사 스크립트는 import), `build_disclosure_card`(순수 함수), `write_disclosure_card` → `reports/analyst_cards/<T>/<code>_disclosure.json`(퀀트·차트 카드와 같은 형식, 공통 키 `card="disclosure"`, `layer="reference"`, `used_by_model=false`).
+  3. `scripts/ingest_dart_disclosures.py` — 수집 유니버스(kospi200) 공시 목록 증분 수집(`--lookback-days`, 기본 40). raw는 `data/raw/dart/list/<code>/`, 정규화는 `data/processed/disclosures/<code>.json`(접수번호 기준 병합). 회사코드 맵은 `data/processed/dart_corp_codes.json`(30일 지나면 갱신). 둘 다 gitignore.
+  4. `scripts/disclosure_card.py --from-picks 50 --date T` — 저장된 목록만 읽어 카드 작성(API 호출 없음).
+  5. 야간 수집: 3단계 뒤 공시 목록 증분(매일, 약 200회 호출 — 무료 한도 일 2만 회), 5단계에서 차트 카드 다음 공시 카드.
+  6. 뷰어: 공시 박스 요약 + "자세히"에 종류별 개수 표·공시 목록(원문 링크), 데이터 기준일. "준비 중"은 시장 박스만 남음. 뉴스는 여전히 준비 중으로 표기.
+- **테스트 계획**: 분류(기존 테스트 유지 + 증권 발행 서류), 30일 창 경계(T 포함·T−30 제외·T 이후 제외), 정정 표시, 개수 합 = 목록 수, 엄격 JSON, 저장 병합(같은 접수번호 중복 없음), API 페이지 처리·키 제거(mock), 뷰어 요약에 판단 문구 없음.
+- **체크리스트**:
+  - [x] (a) DART 클라이언트 + 테스트 — `src/api/dart_client.py`(`get_filings` 연속 페이지·`last_reprt_at=N`, `get_corp_codes` zip, 오류에서 키 제거), `tests/test_dart_client.py` 5개
+  - [x] (b) 분류 이동 + 카드 빌더 + 테스트 — `src/analysts/disclosure.py`(`CATEGORIES` 원본 그대로 이동, 조사 스크립트는 import — 기존 테스트 4개 그대로 통과, 카드 전용 `CARD_CATEGORIES`, 한국어 라벨, `build_disclosure_card`·`write_disclosure_card`), `tests/test_analyst_disclosure.py` 5개(창 경계 T 포함·T−29 포함·T−30 제외·T 이후 제외, 개수 합, 정정, 카드 전용 분류, 판단 단어 없음, 저장)
+  - [x] (c) 수집 스크립트 + 저장 + 테스트 — `src/data/disclosures.py`(`DisclosureStorage`: raw 저장, 접수번호 병합, 회사코드 맵 30일 캐시), `scripts/ingest_dart_disclosures.py`(회사코드 없는 종목은 경고만, 실패만 종료 코드 1), `tests/test_disclosure_storage.py` 3개
+  - [x] (d) 카드 스크립트 — `scripts/disclosure_card.py`(`chart_card.py`와 같은 판단일·종목 결정, API 호출 없음)
+  - [x] (e) 뷰어 공시 박스 + 테스트 — 요약 `disclosure_summary`(개수만), 상세: 기간·수집 시각, 종류별 개수, 공시 목록(DART 원문 링크 열), 주의 문구 3개, "뉴스는 준비 중" 표기. `NOT_BUILT`에는 시장만 남음. 뷰어 테스트 11 → 13
+  - [x] (f) 야간 수집 연결, .gitignore, 전체 테스트, 문서 — `nightly_ingest.sh` [3b/5] DART 목록(수집 유니버스, 40일), 5단계에 `disclosure_card.py --from-picks 50`. `.gitignore`에 `data/processed/disclosures/`, `dart_corp_codes.json`. 전체 363 → **378개 통과**
+- **실제 API 확인 (2026-10-05, 3종목만)**: `ingest_dart_disclosures.py --only 005930 0126Z0 006800 --lookback-days 40` → 회사코드 맵 3,998개, 3/3 성공(영숫자 코드 0126Z0 매핑됨), 요청 5회. 카드 미리보기(10/02, 저장 안 함): 005930 12건(임원·주요주주 소유 보고 8, 최대주주 관련 3, 기타 1), 006800 108건 중 99건이 "증권 발행 서류"로 묶임(나머지: 5% 대량보유 1, 임원 보고 3, 최대주주 1, 기타 4).
+- **미확인**: 전체 200종목 수집과 50종목 카드 저장은 재훈이 실행. 뷰어의 공시 박스를 실제 카드로 본 화면 없음(헤드리스는 다음 확인 때).
+
+
+73. **뷰어 레이아웃: 요약 박스 + 전체 폭 상세 영역 (2026-10-05, 재훈 결정) — UI만, 카드 JSON·모델 변경 없음**
+
+- **문제(재훈)**: 박스 3개 가로 배치 안에서 "자세히"가 펼쳐져 표가 좁아지고 DART 원문 링크 열까지 옆으로 스크롤해야 함. 새 페이지는 퀀트·차트처럼 내용이 적은 전문가에겐 과함.
+- **변경**: 박스는 요약 + "자세히" 버튼만. 누른 전문가의 상세가 박스 줄 **아래 전체 폭 영역 하나**에 표시(한 번에 하나, `st.session_state["expert"]`, 기본 퀀트, 선택된 버튼은 강조). 공시 상세는 표 대신 **공시 제목 자체가 DART 링크**인 목록, 종류별 펼치기(10건 초과 종류는 접힌 상태 — 006800 증권 발행 서류 99건 등). 링크 제목의 `[기재정정]` 같은 대괄호는 이스케이프.
+- **버그 수정**: 상세 영역에 `a() if x else b()` 단독 문장을 써서 Streamlit magic이 `None`을 화면에 출력 → if/else로 수정 + 정적 검사 테스트(뷰어 코드에 단독 조건식 문장 없음).
+- **함수**: `viewer_data.markdown_link`, `disclosure_groups`(카드 순서·개수 유지, 큰 묶음 접기). 테스트 +3(링크 이스케이프, 묶음, 단독 조건식 검사), 전체 **381개 통과**.
+- **헤드리스 확인(실제 카드 폴더, 읽기만)**: 50종목 × 상세 3종(퀀트·차트·공시) 예외 0, `None` 출력 0, 공시 상세 50/50(링크 목록 또는 "공시 없음"), 종목당 공시 묶음 0~5개, 버튼으로 상세 전환 정상.
+- 재훈이 이미 실행한 것(확인): 공시 목록 200종목 수집(`data/processed/disclosures/` 200개), 10/02 공시 카드 50개.
+
+74. **시장 전문가(시장 카드) 1차 — 설계 (2026-10-05, 만들기 전 고정) — 모델·전략 변경 없음 (제품 레이어, 참고 층)**
+
+- **목적**: AGENTS.md 43.8 3단계. 43.2: "market environment (ECOS rates/FX, KOSPI, aggregate flows). Market variables are identical for every stock on a date, so this card describes the environment; it does not pick stocks." 뷰어의 페이지 단위 "시장 전문가" 박스를 실제 내용으로.
+- **보여 줄 것 (판단일 T 기준, 모두 T 이하 데이터만, 기술 통계만)**:
+  1. 지수(Kiwoom ka20006, 이미 수집 중): KOSPI·KOSPI200 종가, 1·5·20거래일 변화율, 200거래일 이동평균 대비 괴리율, 최근 20거래일 실현변동성(연율화).
+  2. 금리(ECOS 817Y002): 국고채 3년·10년, 회사채 3년 AA-, CD 91일 — 최근 값과 20거래일 전 대비 변화(bp), 장단기 금리차(10년−3년, bp).
+  3. 환율(ECOS 731Y001): 원/달러 매매기준율 최근 값, 5·20거래일 변화율. 매매기준율은 전일 거래로 정해지는 값임을 표시(항목 59).
+  4. 대형주 수급(이미 수집 중인 ka10059): top50 합계 외국인·기관 5·20거래일 순매수(억원). "KOSPI200 상위 50종목 합계 — 시장 전체 아님" 명시.
+  - 각 값의 데이터 기준일을 함께 표시(신선도).
+- **보여 주지 않을 것**: 시장 방향 전망·"위험/양호" 같은 판정, 과거 base rate(1차 범위 밖 — 하려면 사전등록), 종목 추천과의 연결, FRED(T−2 규칙, 항목 59에서 보류).
+- **구조**:
+  1. `src/api/ecos_client.py` — `StatisticSearch` 일별 시계열(페이지 처리, 키는 URL 경로에 들어가므로 오류 메시지에서 제거). 키 `.env` `ECOS_API_KEY`.
+  2. `src/data/macro.py` — ECOS 시계열 저장(raw `data/raw/ecos/<stat>_<item>/`, 정규화 `data/processed/macro/ecos_<stat>_<item>.json`, 날짜 병합 — 나중 값이 대체).
+  3. `scripts/ingest_ecos.py` — 5개 시리즈. 처음에는 2000년부터 전체, 이후 `--lookback-days`(기본 30) 증분. 하루 약 5회 호출.
+  4. `src/analysts/market.py` — `build_market_card`(순수 함수: 지수 바·ECOS 시계열·수급 목록 → dict), `write_market_card` → `reports/analyst_cards/<T>/market.json`(공통 키 `card="market"`, `layer="reference"`, `used_by_model=false`, 종목 키 없음).
+  5. `scripts/market_card.py --date T` — 저장된 데이터만 읽음(API 호출 없음).
+  6. 야간 수집: [3c/5] ECOS 증분, 5단계에서 공시 카드 다음 시장 카드.
+  7. 뷰어: 페이지 단위 시장 박스 요약(KOSPI 수준·20일 변화, 국고채 3년, 원/달러 — 값만) + "자세히"를 누르면 시장 박스 바로 아래 전체 폭으로 표 4개·데이터 기준일·주의 문구.
+- **테스트 계획**: 변화율·이동평균·변동성 계산(합성 시계열 정답), T 이후 값 미사용(T 이후 값을 바꿔도 카드 불변 — 누수 방지 테스트), 데이터 부족 시 None, ECOS 페이지·오류 키 제거(mock), 저장 병합, 엄격 JSON, 판단 단어 없음, 뷰어 요약.
+- **체크리스트**:
+  - [x] (a) ECOS 클라이언트 + 저장 + 수집 스크립트 + 테스트 — `src/api/ecos_client.py`(페이지, INFO-200 = 데이터 없음, URL 경로의 키 제거), `src/data/macro.py`(`ECOS_SERIES` 5개, 날짜 병합, 빈 값 건너뜀), `scripts/ingest_ecos.py`(처음 2000년부터, 이후 30일 증분), `tests/test_ecos_macro.py` 4개. 실제 첫 수집(2026-10-05): 5/5 성공, 요청 5회, 시리즈당 6,386~6,929개, 최신 10/02
+  - [x] (b) 시장 카드 빌더 + 카드 스크립트 + 테스트 — `src/analysts/market.py`(`index_stats`, `series_stats`, `flow_totals`, `build_market_card`, `write_market_card` → `<T>/market.json`), `scripts/market_card.py`, `tests/test_analyst_market.py` 6개(정답 계산, 이력 부족 → None, 금리차·환율·수급, **T 이후 값을 바꿔도 카드 불변**, 판단 단어 없음·엄격 JSON, 데이터 없음)
+  - [x] (c) 뷰어 시장 박스 + 테스트 — 페이지 상단 박스 요약(`market_summary`: KOSPI 수준·20일 변화, 국고채 3년, 원/달러 — 값만) + "자세히/접기"로 박스 아래 전체 폭에 지수·금리(+장단기 금리차)·환율·대형주 수급 표와 주의 문구. "준비 중" 헬퍼(`NOT_BUILT`, `not_built_summary`) 삭제 — 남은 준비 중은 뉴스뿐(공시 박스 안 표기). 뷰어 테스트 15 → 17
+  - [x] (d) 야간 수집, .gitignore, 전체 테스트, 실제 API 확인, 문서 — `nightly_ingest.sh` [3c/5] ECOS 증분, 5단계에 `market_card.py`. `.gitignore` `data/processed/macro/`. 전체 381 → **392개 통과**
+- **실제 데이터 확인 (2026-10-05, 판단일 10/02, 임시 폴더에 카드 작성 — `reports/` 미사용)**: KOSPI 7,003.74(20일 +6.7%, 200일 평균 대비 +10.7%, 20일 변동성 연율 28.8%), KOSPI200 1,109.05(20일 +7.5%), 국고채 3년 3.937·10년 4.365(금리차 42.8bp), 회사채 AA- 4.638, CD91 3.21, 원/달러 1,359.6(5일 −0.03%, 20일 −0.78%), top50 합계 5일 순매수 외국인 −75,457억·기관 −12,225억(10/02, 50종목). 뷰어 헤드리스: 예외 0, 요약·자세히/접기·표 정상, `None` 출력 0.
+- **미확인**: `reports/analyst_cards/20261002/market.json`은 재훈이 `market_card.py`로 작성. 브라우저 화면.
+
+
+75. **뉴스 전문가(뉴스 카드) 1차 — 설계 (2026-10-06, 만들기 전 고정) — 모델·전략 변경 없음 (제품 레이어, 참고 층)**
+
+- **목적**: AGENTS.md 43.8 4단계. 분석가 패널의 "공시·뉴스 전문가" 박스에 뉴스 추가(43.2: "articles, each with the original link. Summaries only; any good/bad reading is labeled as an unvalidated interpretation").
+- **API (정정 포함)**: 네이버 검색 API는 **NAVER API HUB로 이관**됨(2026-06-25 출시, 07-31 개발자센터 신규 발급 종료, 2027-06-30 기존 방식 종료 예정). 주소 `https://naverapihub.apigw.ntruss.com/search/v1/news`, 헤더 `X-NCP-APIGW-API-KEY-ID` / `X-NCP-APIGW-API-KEY`, 키는 NCP 콘솔 발급(ID 10자·Secret 40자 형식). 응답 구조(`total`, `items[title, originallink, link, description, pubDate]`)는 기존과 같음. 월 775,000회·50 RPS, 현재 한시 무료. *(Claude가 처음에 "NCP 키라서 잘못 받았다"고 판단한 것은 틀렸음 — 재훈 지적으로 확인·정정.)* `.env` 키 이름은 `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET` 유지, `.env.example`에 자리 추가.
+- **실제 응답 확인 (2026-10-06 10:24, "삼성전자", 1회)**: 200, `total` 4,483,481, 최신순 100건이 09:36~10:20(**44분 분량**), 제목에 "삼성전자" 포함 33/100, `pubDate` 예 `Tue, 06 Oct 2026 10:20:00 +0900`, 제목·요약에 `<b>` 강조 태그, `link`는 네이버 뉴스(n.news.naver.com) 또는 원문.
+- **설계 결정 (위 사실 반영)**:
+  1. **기사 수를 지표로 쓰지 않음**: 검색어당 최근 약 1,000건까지만 받을 수 있어 대형주는 하루치도 다 못 모음 → "최근 N일 기사 N건" 같은 개수는 종목 간 비교·시간 비교가 안 됨. 카드는 "수집 시점의 최근 기사 일부"임을 명시.
+  2. **관련도 필터**: 제목에 종목명이 들어간 기사만 카드에 표시(태그 제거 후 비교). 그 외 기사는 저장만. 일반 단어와 겹치는 종목명(예: 기아)은 섞일 수 있음을 주의 문구로.
+  3. **시점**: 판단 시점 A(T 20:00 KST) 이전 `pubDate`만, 최근 3일(T−2 ~ T 20:00). 과거 기사는 API로 다시 받을 수 없음 → 수집 시작일 이전 판단일 카드는 비어 있을 수 있음(전진 수집만).
+  4. **표시**: 최신 기사 최대 20건 — 시각, 언론사 도메인(원문 주소에서), 제목(누르면 기사 링크: 네이버 뉴스 링크 우선, 없으면 원문), 요약 없음(제목만 — 저작권·간결성). 박스 요약은 "뉴스: 최근 3일 제목 일치 기사 k건 표시(수집분 기준)"처럼 수집분 기준임을 함께. 호재/악재·감성 판단 없음.
+  5. **수집**: 야간(20:37) top50 종목별 최신순 최대 3페이지(300건), 링크 기준 병합 저장. 하루 약 150회 이하(한도 대비 여유). raw `data/raw/naver_news/<code>/`, 정규화 `data/processed/news/<code>.json`(gitignore).
+- **실제 수집 확인 후 보완 (2026-10-06, 카드 만들기 전, 3종목 × 300건)**: 수집 범위 삼성전자 약 3시간(07:36~10:20), 기아 3일, NAVER 5일. 제목 일치 삼성전자 109/290, 기아 74/300, **NAVER 9/300**(국내 기사는 "네이버"로 씀, "NAVER" 검색은 영문 기사까지 섞임). → (1) 종목별 **별칭 표**(언론이 쓰는 이름: 네이버, LG엔솔, 삼성바이오, 한전 등)를 명시적으로 두고 첫 별칭을 검색어로, 모든 별칭을 제목 일치 판정에 사용. 표에 없는 종목은 유니버스 종목명 그대로. (2) 종목당 최대 1,000건(10페이지)으로 늘림 — top50 하루 약 500회(한도 대비 여유). (3) 카드에 실제 수집 범위(가장 이른·늦은 기사 시각)를 표시.
+- **구조**: `src/api/naver_news_client.py`(HUB 주소·헤더, 페이지, 오류에서 키 제거), `src/data/news.py`(저장·병합, 태그 제거·HTML 엔티티 복원, pubDate → ISO KST), `scripts/ingest_naver_news.py`, `src/analysts/news.py`(`build_news_card`, `write_news_card` → `<code>_news.json`, 공통 키 `card="news"`, `layer="reference"`, `used_by_model=false`), `scripts/news_card.py`, 뷰어 공시·뉴스 박스에 뉴스 요약·상세 섹션, 야간 수집 연결.
+- **테스트 계획**: HUB 헤더·페이지·키 제거(mock), 태그·엔티티 정리, pubDate 파싱, 링크 병합, 시점 경계(T 20:00 이후 제외·T−3 제외), 제목 일치 필터, 판단 단어 없음, 뷰어 요약.
+- **체크리스트**:
+  - [x] (a) 클라이언트 + 저장 + 수집 스크립트 + 테스트 — `src/api/naver_news_client.py`(HUB 주소·NCP 헤더, 최신순 페이지, 두 키 모두 오류에서 제거), `src/data/news.py`(태그·엔티티 정리, pubDate → ISO, 언론사 도메인, 링크 병합 — 요약문은 저장 안 함), `scripts/ingest_naver_news.py`(검색어 = 별칭 표 첫 이름, 기본 10페이지), `tests/test_naver_news.py` 5개
+  - [x] (b) 뉴스 카드 + 카드 스크립트 + 테스트 — `src/analysts/news.py`(`NEWS_ALIASES` 7종목, `window_bounds`: T−2 00:00 ~ T 20:00 KST, 제목 일치만 최신 20건, 실제 수집 범위 `collected_span`, 주의 문구 3개), `scripts/news_card.py`, `tests/test_analyst_news.py` 5개(시점 경계 — 20:01 제외·T−3 제외, 별칭, 표시 상한, 판단 단어 없음, 빈 저장소)
+  - [x] (c) 뷰어 + 테스트 — 공시·뉴스 박스 요약 두 줄(공시 개수 / "뉴스: 최근 3일 제목 일치 k건 (수집분 기준)"), 상세를 "공시"·"뉴스" 두 부분으로, 뉴스 제목이 기사 링크, 검색어·수집 범위·주의 문구 표시. "준비 중" 표기 모두 제거. 뷰어 테스트 17 → 18
+  - [x] (d) 야간 수집, .gitignore, 전체 테스트, 실제 API 확인, 문서 — `nightly_ingest.sh` [3d/5] 뉴스(top50, 매일 — 지난 기사는 나중에 못 받음), 4단계 백업에 `data/raw/naver_news/` 추가, 5단계에 `news_card.py`. `.gitignore` `data/processed/news/`. 전체 392 → **403개 통과**
+- **확인 (2026-10-06)**: 실제 수집 3종목(9회 호출 성공). 판단일 10/02 카드 미리보기: 수집이 10/06에 시작돼 삼성전자·기아 0건(정상 — 지난 기사는 못 받음), NAVER는 시험 수집에 걸린 15건. 뷰어 헤드리스(임시 폴더): 50종목 예외 0, `None` 0, 공시·뉴스 두 부분 표시, 뉴스 링크 15줄. 관찰: 첫 기사가 "10/2 주목할 종목: …NAVER…" 같은 종목 나열 기사 — 제목 일치 필터의 한계(주의 문구에 반영됨).
+- **운영**: 의미 있는 뉴스 카드는 오늘 밤(10/06 20:37) 야간 수집부터 쌓이는 기사로, 다음 금요일 판단일(10/09)부터. 맥이 꺼져 있던 날의 기사는 영구히 빠짐(분봉과 같은 성격).
+
+
+76. **뉴스 카드: 규칙 기반 "이슈 묶기" (2026-10-06, 재훈 결정) — 모델·전략 변경 없음 (제품 레이어, 참고 층, 실험 아님)**
+
+- **배경**: 수집된 기사가 대부분 중복·잡음. 삼성전자 최근 이틀 제목 일치 227건 중 "갤럭시 탭 S12 출시" 한 사건이 50건 이상, 주가·시황 자동기사 32건, 포토·인사 12건. 재훈: 중요한 것만 골라 보고 싶음. LLM 요약 대신 규칙 기반으로 결정(설명 가능, 판단 금지 원칙 유지, 비용 없음 — LLM 요약은 나중에 얹을 수 있음).
+- **규칙**:
+  1. **잡음 제외**(제목 키워드, 순서대로 첫 일치): 주가·시황 자동기사(장중 시세·등락률·특징주·수급 순매수/순매도 등), 종목 나열(주목할 종목·관련주·테마주), 포토·영상, 인사·부고, 칼럼·사설. 빼지 않고 "제외 N건(종류별)"로 접어 둠 — 펼치면 볼 수 있음.
+  2. **같은 사건 묶기**: 제목에서 종목명·[말머리]·문장부호를 지운 뒤 글자 2-gram 유사도(Jaccard)가 기준 이상이면 같은 이슈. 대표 제목은 가장 먼저 나온 기사.
+  3. **중요도 = 보도한 매체 수**(서로 다른 언론사 도메인), 같으면 최근 기사 순. "많이 보도됨"이지 좋고 나쁨이 아님.
+  4. **종류 태그**(제목 키워드, 최대 2개): 실적, 수주·계약·투자, 자본(자사주·배당·증자), M&A·지배구조, 규제·소송·사고, 신제품·기술, 증권사 의견(목표가 등).
+- **기준 조정**: 묶기 유사도 기준과 잡음 키워드는 실제 수집 기사(50종목)를 보고 정함 — 잘못 묶이거나(서로 다른 사건이 합쳐짐) 잘못 빠지는(사건 기사가 잡음으로 분류) 사례를 확인해 아래에 기록. 숫자를 만들어 내는 규칙이 아니라 화면 정리 규칙이므로 사후 조정 금지 원칙(실험용)의 대상은 아님 — 다만 바꿀 때마다 기록.
+- **카드 스키마 v2**: `issues`(대표 제목·링크, 첫·마지막 시각, 기사 수, 매체 수, 태그, 같은 이슈 다른 기사 일부), `excluded`(종류별 개수 + 목록). 기존 `articles` 대신. 뷰어는 상위 이슈 10개 + 나머지 접기 + 제외 기사 접기.
+- **체크리스트**:
+  - [x] (a) 규칙 구현 + 실제 기사로 기준 확인 — `src/analysts/news.py`: `NOISE_RULES`, `ISSUE_TAGS`, `noise_category`, `issue_tags`, `_signature`(종목명·말머리·문장부호 제거 후 글자 2-gram), `cluster_issues`(묶음의 모든 기사와 비교 — 대표 제목 하나와만 비교하면 같은 사건이 갈림)
+  - [x] (b) 카드 v2 + 테스트 — `schema_version` 2: `issues`(대표 = 가장 이른 기사, 첫·마지막 시각, 기사 수, 매체 수, 태그 최대 2, 같은 이슈 다른 기사 5개), `n_issues`, `excluded`(종류별 개수 + 목록 최대 100). `tests/test_analyst_news.py` 5 → 7개(잡음 분리, 같은 사건 묶기·매체 수 정렬, 상한·태그)
+  - [x] (c) 뷰어 + 테스트, 헤드리스 확인 — 요약 "뉴스: 최근 3일 이슈 N개 · 제목 일치 k건 · 제외 m건 (수집분 기준)", 상세 "많이 보도된 이슈" 상위 10개(매체 수·링크 제목·기사 수·태그·시각) + "나머지 이슈" 접기 + "제외한 기사 m건(종류별)" 접기. 헤드리스(임시 폴더): 50종목 예외 0·`None` 0
+  - [x] (d) 전체 테스트, 문서 — 전체 403 → **405개 통과**
+- **기준 조정 기록 (실제 수집 기사 50종목, 2026-10-06)**:
+  - 처음(유사도 0.35, 대표 제목과만 비교): 같은 사건이 여러 묶음으로 갈림(삼성전자 "용인 과학축제·국가산단" 4개, 기아 "美 분기 판매 50만대" 3개).
+  - 묶음의 모든 기사와 비교 + 0.25: 큰 사건이 합쳐짐(삼성 실적 전망 15매체, 기아 3분기 판매 59매체), 무작위 표본에서 다른 사건 혼입 거의 없음. 그래도 기아 "영국 판매 2위" 4개, 한전 "개인정보 노출" 3개로 갈림.
+  - 측정: 갈린 같은 사건끼리 유사도 0.09~0.20, 다른 사건 대조 0.00~0.06. 0.18이면 한전 99→120건, 삼성 실적 17→23건으로 합쳐지나 약간 섞임(LG전자 냉각 수주 묶음에 증권사 목표가 기사, 기아 글로벌 판매 묶음에 美 판매 기사). → **0.20으로 결정**(중요 이슈를 보려는 목적상 덜 갈리는 쪽을 택함, 드문 혼입은 주의 문구로).
+  - 잡음 규칙 추가: 순위 홍보(`브랜드평판`), 증시 전망(`[마켓`, `증시 전망`, `7000선 안착` 류 지수 수준), 시세 표현 `보합`. 태그 키워드 추가: 판매·수출·점유율(실적·판매), 협약·맞손(계약), 오염·초과·위반(규제·사고).
+  - 남은 한계: 표현이 크게 다른 같은 사건은 여전히 갈릴 수 있음, 종목 나열이 아닌 "여러 회사 언급" 기사(예: 3사 비교)는 각 종목에 잡힘, 짧은 이름(LG·SK)은 계열사 기사 포함.
+
+- **버그 수정 (2026-10-06, 재훈 실행 중 발견)**: `scripts/news_card.py`가 v1 키 `card["articles"]`를 읽어 `KeyError` → 출력 줄을 `summary_line(card)`(이슈·제외 개수)로 바꾸고 테스트 1개 추가(v2 카드로 출력 확인). 전체 **406개 통과**. 원인: 카드 형식을 v2로 바꿀 때 스크립트 출력부를 확인하지 않음.

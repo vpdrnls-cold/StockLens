@@ -14,9 +14,15 @@
 #   3. index bars (ka20006: KOSPI, KOSPI200) + investor flows (ka10059) for
 #      the universe, incremental (last 10 days, ~52 calls). Re-fetching 10 days
 #      lets a later final value replace an earlier one (items 58/64).
+#   3b. DART disclosure lists for the universe, last 40 days (item 72, ~200 requests)
+#   3c. ECOS rates and KRW/USD, last 30 days (item 74, ~5 requests)
+#   3d. news headlines for top50, newest 1,000 per stock (item 75, ~500 requests) --
+#       past headlines cannot be fetched later, so this one must run every night
 #   4. optional: mirror data/raw/kiwoom/ka10080 to $STOCKLENS_RAW_BACKUP_DIR
 #   5. whenever daily bars were refreshed (Fridays by default): write the
 #      paper-trading pick log reports/daily_picks/<date>.csv (scripts/recommend.py)
+#      + quant cards (item 69), chart cards (item 70) and disclosure cards (item 72), the market card (item 74) and news cards (item 75) in
+#      reports/analyst_cards/<date>/ -- read by the viewer app/viewer.py
 #
 # Why daily bars are not fetched every night:
 #   ka10081 is requested with adjusted prices (upd_stkpc_tp=1), so every call
@@ -77,17 +83,45 @@ status=0
   echo "--- [3/5] index bars + investor flows (ka20006/ka10059, last 10 days) ---"
   STOCKLENS_UNIVERSE="$COLLECT" "$PYTHON" scripts/ingest_kiwoom_flow_index.py --lookback-days 10 || status=1
 
+  echo "--- [3b/5] DART disclosure lists (OpenDART, last 40 days, item 72) ---"
+  STOCKLENS_UNIVERSE="$COLLECT" "$PYTHON" scripts/ingest_dart_disclosures.py --lookback-days 40 || status=1
+
+  echo "--- [3c/5] ECOS rates + KRW/USD (5 series, last 30 days, item 74) ---"
+  "$PYTHON" scripts/ingest_ecos.py --lookback-days 30 || status=1
+
+  echo "--- [3d/5] news headlines (NAVER API HUB, top50, newest 1,000 per stock, item 75) ---"
+  "$PYTHON" scripts/ingest_naver_news.py --pages 10 || status=1
+
   if [[ -n "${STOCKLENS_RAW_BACKUP_DIR:-}" ]]; then
     echo "--- [4/5] backup ka10080 raw -> $STOCKLENS_RAW_BACKUP_DIR ---"
     mkdir -p "$STOCKLENS_RAW_BACKUP_DIR"
     rsync -a data/raw/kiwoom/ka10080/ "$STOCKLENS_RAW_BACKUP_DIR/ka10080/" || status=1
+    # item 75: headlines cannot be re-fetched later either
+    if [[ -d data/raw/naver_news ]]; then
+      rsync -a data/raw/naver_news/ "$STOCKLENS_RAW_BACKUP_DIR/naver_news/" || status=1
+    fi
   else
     echo "--- [4/5] backup skipped (STOCKLENS_RAW_BACKUP_DIR not set) ---"
   fi
 
   if [[ "$daily" == "1" ]]; then
     echo "--- [5/5] recommendation log (scripts/recommend.py) ---"
-    "$PYTHON" scripts/recommend.py || status=1
+    "$PYTHON" scripts/recommend.py
+    rc=$?
+    if [[ $rc -eq 3 ]]; then
+      # item 71: the paper log for this decision date already exists -> not a failure
+      echo "recommend: skipped (log exists)"
+    elif [[ $rc -ne 0 ]]; then
+      status=1
+    fi
+    # item 70: chart cards for every ranked stock, next to the quant cards recommend.py just wrote
+    "$PYTHON" scripts/chart_card.py --from-picks 50 > /dev/null || status=1
+    # item 72: disclosure cards from the stored DART lists (no API call)
+    "$PYTHON" scripts/disclosure_card.py --from-picks 50 > /dev/null || status=1
+    # item 74: market card for the same decision date (stored data only)
+    "$PYTHON" scripts/market_card.py > /dev/null || status=1
+    # item 75: news cards from the stored headlines (no API call)
+    "$PYTHON" scripts/news_card.py --from-picks 50 > /dev/null || status=1
   else
     echo "--- [5/5] recommendation skipped (daily bars not refreshed today) ---"
   fi

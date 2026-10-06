@@ -33,7 +33,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import sys
 import time
 from typing import Any
@@ -62,54 +61,17 @@ WINDOWS = (
 )
 PROBE_START, PROBE_END = WINDOWS[0][1], WINDOWS[-1][2]
 
-# Report-name keyword -> category. Matched on the normalized name (spaces and
-# the leading [..] correction tag removed). First match wins, so order matters.
-CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("prelim_earnings", ("영업(잠정)실적", "잠정실적")),
-    ("periodic_report", ("사업보고서", "반기보고서", "분기보고서")),
-    ("buyback_acquire", ("자기주식취득결정", "자기주식취득신탁계약체결결정")),
-    ("buyback_dispose", ("자기주식처분결정", "자기주식취득신탁계약해지결정")),
-    ("treasury_cancel", ("주식소각결정",)),
-    ("rights_offering", ("유상증자결정",)),
-    ("bonus_issue", ("무상증자결정",)),
-    ("convertible_bond", ("전환사채권발행결정", "신주인수권부사채권발행결정", "교환사채권발행결정")),
-    ("dividend", ("현금ㆍ현물배당결정", "현금·현물배당결정", "배당결정")),
-    ("merger_split", ("합병결정", "분할결정", "분할합병결정", "영업양수결정", "영업양도결정")),
-    ("supply_contract", ("단일판매ㆍ공급계약", "단일판매·공급계약")),
-    ("large_holding_5pct", ("주식등의대량보유상황보고서",)),
-    ("insider_holding", ("임원ㆍ주요주주특정증권등소유상황보고서", "임원·주요주주특정증권등소유상황보고서")),
-    ("largest_holder_change", ("최대주주변경", "최대주주등소유주식변동신고서")),
-    ("fair_disclosure_other", ("공정공시",)),
+# Report-name rules moved to src/analysts/disclosure.py (item 72); unchanged, imported here.
+from src.analysts.disclosure import (  # noqa: E402
+    CATEGORIES,
+    categorize,
+    correction_tag,
+    normalize_report_name,
 )
-_TAG_RE = re.compile(r"^\[[^\]]*\]")
 
 
 class DartError(RuntimeError):
     pass
-
-
-def normalize_report_name(name: str) -> str:
-    """Drop the leading [기재정정]/[첨부추가]... tag and all whitespace."""
-    name = name.strip()
-    while True:
-        stripped = _TAG_RE.sub("", name).strip()
-        if stripped == name:
-            break
-        name = stripped
-    return re.sub(r"\s+", "", name)
-
-
-def correction_tag(name: str) -> str | None:
-    match = _TAG_RE.match(name.strip())
-    return match.group(0) if match else None
-
-
-def categorize(report_nm: str) -> str:
-    norm = normalize_report_name(report_nm)
-    for category, keys in CATEGORIES:
-        if any(key in norm for key in keys):
-            return category
-    return "other"
 
 
 def window_of(rcept_dt: str) -> str | None:

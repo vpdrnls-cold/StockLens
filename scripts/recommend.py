@@ -30,6 +30,22 @@ Buffered holdings (item 66)
   replaying the earlier neutral logs' rankings with the engine's own rule
   (src/portfolio/paper_holdings.py), and stores them as ``held_buffered``.
 
+Quant cards (item 69)
+  A neutral run that saves (no --no-save) also writes one quant card per scored
+  stock to reports/analyst_cards/<T>/<code>_quant.json (src/analysts/quant.py),
+  built only from the values computed here. Profile runs write none: the card is
+  the record of the model ranking (the recommendation layer), not of a profile tilt.
+
+Paper-log guard and --cards-only (item 71)
+  A neutral saving run stops BEFORE training if reports/daily_picks/<T>.csv already
+  exists: the paper log is the record of the pre-registered strategy and is never
+  overwritten (there is no force option -- move the file by hand if ever needed).
+  --cards-only (neutral only) writes the quant cards for T and never the CSV. When
+  the log for T exists, the recomputed rank/score (and held_buffered, if the log has
+  it) must match it, otherwise no card is written.
+  Exit codes: 2 bad option combination, 3 log for T already exists (nothing written),
+  4 --cards-only result differs from the log for T (no card written).
+
 Risk profiles (item 56)
   --profile conservative | aggressive re-ranks with src/recommendation/scoring.py:
   z(model) + lambda * profile tilt, lambda calibrated on the frozen model's
@@ -48,6 +64,7 @@ Risk profiles (item 56)
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -62,6 +79,7 @@ from scripts.run_ml_backtest import (
     frozen_model_matches,
     train_frozen_model,
 )
+from src.analysts.quant import build_quant_card, write_quant_card
 from src.data.session import intraday_bar_error
 from src.data.storage import HistoricalStorage
 from src.data.universe import TOP50_UNIVERSE_PATH, load_universe_file
@@ -150,6 +168,75 @@ def buffered_holdings(day_ranked: list[str], date: pd.Timestamp, log_dir: Path):
     return steps[-1], prev, len(history), schedule_gaps([d for d, _ in history] + [date])
 
 
+LOG_EXISTS_EXIT = 3
+LOG_MISMATCH_EXIT = 4
+SCORE_TOLERANCE = 1e-9
+
+
+def should_write_cards(profile: str, no_save: bool, cards_only: bool = False) -> bool:
+    """Quant cards only for a neutral run that saves, or for --cards-only (items 69/71)."""
+    return profile == "neutral" and (cards_only or not no_save)
+
+
+def should_write_csv(no_save: bool, cards_only: bool) -> bool:
+    return not no_save and not cards_only
+
+
+def cli_error(profile: str, cards_only: bool, no_save: bool) -> str | None:
+    """Invalid option combinations (item 71), checked after --profile saved is resolved."""
+    if cards_only and profile != "neutral":
+        return "--cards-only 는 중립 실행 전용입니다(카드는 모델 순위의 기록). --profile 과 함께 쓸 수 없습니다."
+    if cards_only and no_save:
+        return "--cards-only 와 --no-save 는 함께 쓸 수 없습니다(--cards-only 는 카드를 저장하는 옵션)."
+    return None
+
+
+def existing_log_path(out_dir: str | Path, date: pd.Timestamp) -> Path | None:
+    path = Path(out_dir) / f"{date:%Y%m%d}.csv"
+    return path if path.exists() else None
+
+
+def log_exists_message(path: Path) -> str:
+    return (f"{path} 가 이미 있습니다. 페이퍼 로그는 덮어쓰지 않습니다(사전등록 전략의 기록, 항목 71).\n"
+            f"이 판단일의 퀀트 카드만 필요하면: --cards-only --date {path.stem[:4]}-{path.stem[4:6]}-{path.stem[6:]}")
+
+
+def compare_with_log(
+    day: pd.DataFrame, log: pd.DataFrame, held: set[str] | None = None, tol: float = SCORE_TOLERANCE
+) -> tuple[list[dict], bool]:
+    """Differences between this run (index stock_code, columns rank/score) and the saved log.
+
+    Returns (differences, held_compared). held_buffered is compared only when the log has
+    that column (logs written before item 66 do not).
+    """
+    log = log.assign(stock_code=log["stock_code"].astype(str).str.zfill(6)).set_index("stock_code")
+    diffs: list[dict] = []
+    for code in sorted(set(day.index) ^ set(log.index)):
+        diffs.append({"stock_code": code, "field": "presence",
+                      "run": code in day.index, "log": code in log.index})
+    held_compared = held is not None and "held_buffered" in log.columns
+    for code in sorted(set(day.index) & set(log.index)):
+        if int(day.loc[code, "rank"]) != int(log.loc[code, "rank"]):
+            diffs.append({"stock_code": code, "field": "rank", "run": int(day.loc[code, "rank"]),
+                          "log": int(log.loc[code, "rank"])})
+        if abs(float(day.loc[code, "score"]) - float(log.loc[code, "score"])) > tol:
+            diffs.append({"stock_code": code, "field": "score", "run": float(day.loc[code, "score"]),
+                          "log": float(log.loc[code, "score"])})
+        if held_compared and bool(log.loc[code, "held_buffered"]) != (code in held):
+            diffs.append({"stock_code": code, "field": "held_buffered", "run": code in held,
+                          "log": bool(log.loc[code, "held_buffered"])})
+    return diffs, held_compared
+
+
+def holdings_note(log_path: Path | None, held_compared: bool) -> str:
+    """Optional card field for --cards-only: where the card's holdings come from."""
+    if log_path is None:
+        return "페이퍼 로그 없는 판단일 — 이전 로그를 재생한 보유"
+    if not held_compared:
+        return "로그에 보유 기록 없음 — 이전 로그를 재생한 보유"
+    return "로그의 보유 기록과 일치"
+
+
 def staleness_warning(date: pd.Timestamp) -> str | None:
     """Warn when the newest bar is older than the last finished weekday session."""
     now = datetime.now(KST)
@@ -171,6 +258,9 @@ def main() -> None:
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (default: latest date with enough bars)")
     ap.add_argument("--out", default="reports/daily_picks")
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--cards-out", default="reports/analyst_cards", help="퀀트 카드 저장 위치 (항목 69)")
+    ap.add_argument("--cards-only", action="store_true",
+                    help="중립 전용: 퀀트 카드만 쓰고 페이퍼 로그 CSV는 쓰지 않음 (항목 71)")
     ap.add_argument("--profile", choices=sorted(PROFILES) + ["saved"], default="neutral",
                     help="투자성향 재랭킹 (기본 neutral = 모델 순위 그대로, 항목 56). "
                          "saved = scripts/survey.py 로 저장한 진단 결과 사용 (항목 57)")
@@ -187,17 +277,28 @@ def main() -> None:
         print(f"저장된 투자성향 사용: {survey.PROFILE_LABELS[saved.profile]}({saved.profile}), 진단일 {saved.created_at[:10]}")
         args.profile = saved.profile
 
-    trained, splits = train_frozen_model(_load_priced_dataset())
-    if trained.best_iteration != EXPECTED_BEST_ITERATION or not frozen_model_matches(trained):
-        print(f"주의: 고정 모델이 기록된 모델과 다릅니다(best_iteration={trained.best_iteration}, "
-              f"기대값 {EXPECTED_BEST_ITERATION}, 트리 지문은 config/frozen_daily_model.json). "
-              "학습 데이터나 코드·라이브러리가 바뀌었는지 확인하세요. forward 평가는 이 상태로 실행되지 않습니다.")
+    problem = cli_error(args.profile, args.cards_only, args.no_save)  # item 71
+    if problem:
+        print(problem, file=sys.stderr)
+        raise SystemExit(2)
 
+    # Decision date and its guards first, so a refused run never pays for training (item 71).
     feats = live_features()
     date = latest_decision_date(feats, args.date)
     guard = intraday_bar_error(date.date(), datetime.now(KST))  # item 63
     if guard:
         raise SystemExit(guard)
+    log_path = existing_log_path(args.out, date) if args.profile == "neutral" else None
+    if log_path is not None and should_write_csv(args.no_save, args.cards_only):
+        print(log_exists_message(log_path), file=sys.stderr)
+        raise SystemExit(LOG_EXISTS_EXIT)
+
+    trained, splits = train_frozen_model(_load_priced_dataset())
+    model_ok = trained.best_iteration == EXPECTED_BEST_ITERATION and frozen_model_matches(trained)
+    if not model_ok:
+        print(f"주의: 고정 모델이 기록된 모델과 다릅니다(best_iteration={trained.best_iteration}, "
+              f"기대값 {EXPECTED_BEST_ITERATION}, 트리 지문은 config/frozen_daily_model.json). "
+              "학습 데이터나 코드·라이브러리가 바뀌었는지 확인하세요. forward 평가는 이 상태로 실행되지 않습니다.")
     day = feats[feats["trade_date"] == date].set_index("stock_code")
     cols = list(trained.feature_columns)
     day = day[day[cols].notna().sum(axis=1) >= len(cols) - 2]  # skip stocks without enough history
@@ -295,12 +396,43 @@ def main() -> None:
             "held_buffered": (code in held) if held is not None else None,
         })
 
-    if not args.no_save:
+    if should_write_csv(args.no_save, args.cards_only):  # item 71: --cards-only never writes the log
         out = Path(args.out if args.profile == "neutral" else f"{args.out}_{args.profile}")
         out.mkdir(parents=True, exist_ok=True)
         path = out / f"{date:%Y%m%d}.csv"
         pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
         print(f"\n저장: {path} (전 종목 순위 포함)")
+
+    if should_write_cards(args.profile, args.no_save, args.cards_only):  # items 69/71; after all checks
+        note = None
+        if args.cards_only:
+            held_compared = False
+            if log_path is not None:
+                log_df = pd.read_csv(log_path, dtype={"stock_code": str}, encoding="utf-8-sig")
+                diffs, held_compared = compare_with_log(day, log_df, held)
+                if diffs:
+                    print(f"\n카드를 쓰지 않습니다: 재계산 결과가 {log_path} 와 {len({d['stock_code'] for d in diffs})}종목에서 "
+                          f"다릅니다(예: {diffs[:3]}).", file=sys.stderr)
+                    raise SystemExit(LOG_MISMATCH_EXIT)
+                print(f"\n로그 일치 확인: {log_path} (rank·score"
+                      + (", held_buffered)" if held_compared else ") — 로그에 held_buffered 없음, 보유는 비교하지 않음"))
+            else:
+                print("\n주의: 페이퍼 로그 없는 판단일입니다 — 비교 없이 카드를 씁니다.")
+            note = holdings_note(log_path, held_compared)
+        card_dir = Path(args.cards_out) / f"{date:%Y%m%d}"
+        overwritten = len(list(card_dir.glob("*_quant.json"))) if card_dir.is_dir() else 0
+        for code, r in day.sort_values("rank").iterrows():
+            card = build_quant_card(
+                stock_code=code, name=names.get(code, code), decision_date=date.date(),
+                rank=int(r["rank"]), n_stocks=n, percentile=float(r["percentile"]), score=float(r["score"]),
+                tie_size=int(r["tie_size"]), features=r[cols], contributions=contribs.loc[code],
+                best_iteration=trained.best_iteration, fingerprint_match=model_ok,
+                held_buffered=code in held, held_status=("유지" if code in step.carried else "신규") if code in held else None,
+                top_n=TOP_N, buffer_multiplier=BUFFER_MULTIPLIER, holdings_note=note,
+            )
+            write_quant_card(card, Path(args.cards_out))
+        print(f"카드 저장: {Path(args.cards_out) / f'{date:%Y%m%d}'}/ ({n}개)"
+              + (f" — 기존 카드 {overwritten}개 덮어씀" if overwritten else ""))
 
 
 if __name__ == "__main__":

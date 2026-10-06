@@ -7,7 +7,6 @@ from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Mapping, Sequence
 
-from src.data.dataset import TRAIN_START_DATE
 from src.data.models import (
     INVESTOR_CATEGORIES,
     DailyBar,
@@ -80,7 +79,10 @@ _DOCUMENTED_CHANGE_SIGNS = {1, 2, 3, 4, 5}
 # the strict check from 2000 on. A dropped bar shortly before the cutoff can
 # still shorten the ~60-bar warm-up of the first rolling features, which only
 # affects rows of a stock that actually had such a bar.
-LEGACY_OHLC_TOLERANCE_BEFORE = date.fromisoformat(TRAIN_START_DATE)
+# Must equal src.data.dataset.TRAIN_START_DATE (the single source); it is not
+# imported from there because dataset -> features -> src.data -> normalization
+# would be a circular import. tests/test_legacy_bar_handling.py enforces equality.
+LEGACY_OHLC_TOLERANCE_BEFORE = date(2002, 10, 29)
 
 
 class HistoricalDataValidationError(ValueError):

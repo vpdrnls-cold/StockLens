@@ -70,3 +70,17 @@ def test_cutoff_is_the_training_start(response: dict) -> None:
     with pytest.raises(HistoricalDataValidationError):
         normalize_ka10081_response(later)
 
+
+
+def test_core_modules_import_cleanly_in_a_fresh_process() -> None:
+    # Item 70: importing dataset from normalization made `import src.features.engineering`
+    # fail when it was the first import (circular). Each module must import on its own.
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    for module in ("src.features.engineering", "src.data.normalization", "src.data.dataset",
+                   "src.analysts.quant", "src.ui.viewer_data"):
+        done = subprocess.run([sys.executable, "-c", f"import {module}"], cwd=root,
+                              capture_output=True, text=True, env={"PYTHONPATH": str(root), "PYTHONDONTWRITEBYTECODE": "1"})
+        assert done.returncode == 0, f"{module}: {done.stderr.strip().splitlines()[-1:]}"

@@ -1,0 +1,10 @@
+# Viewer environment ONLY (CURRENT_STATUS item 70) -- install into .venv-ui, never into .venv:
+#   python3 -m venv .venv-ui && .venv-ui/bin/pip install -r requirements-ui.txt
+#   .venv-ui/bin/streamlit run app/viewer.py
+# .venv is pinned to the frozen model's environment (requirements.txt, config/frozen_daily_model.json).
+# The viewer only reads card JSON; streamlit brings numpy/pandas, which src/analysts/chart.py needs.
+streamlit
+# src/analysts/chart.py -> src.data package __init__ -> API client module imports dotenv/requests
+# (nothing is called; no keys are read at import time)
+python-dotenv==1.2.3
+requests

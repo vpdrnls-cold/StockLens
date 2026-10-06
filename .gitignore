@@ -203,3 +203,16 @@ data/processed/historical/483650.json
 # any time with scripts/ingest_kiwoom_flow_index.py -- keep out of the public repo.
 data/processed/index/
 data/processed/investor_flow/
+
+# Item 70: separate environment for the Streamlit viewer (never install streamlit into .venv)
+.venv-ui/
+
+# Item 72: DART disclosure lists and corp-code map (re-fetchable)
+data/processed/disclosures/
+data/processed/dart_corp_codes.json
+
+# Item 74: ECOS series (re-fetchable)
+data/processed/macro/
+
+# Item 75: news headlines (collected nightly; cannot be re-fetched for past dates)
+data/processed/news/

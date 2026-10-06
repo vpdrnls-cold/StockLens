@@ -108,6 +108,10 @@ tail -n 20 logs/nightly_ingest_$(TZ=Asia/Seoul date +%Y%m%d).log
 # forward 분봉 커버리지 점검 (주 1회, forward를 '보는' 것이 아님)
 STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/check_forward_minute_coverage.py
 
+# 분석가 패널 뷰어 (별도 venv, 항목 70 — .venv에 streamlit 설치 금지)
+/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m venv .venv-ui && .venv-ui/bin/pip install -r requirements-ui.txt   # 최초 1회
+.venv-ui/bin/streamlit run app/viewer.py
+
 # 설문 → 추천
 PYTHONPATH=. .venv/bin/python scripts/survey.py
 STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/recommend.py --profile saved
