@@ -25,6 +25,7 @@ MINUTE_DATA_SCRIPTS = {
     "intraday_ic_diagnostic.py": "panel capped before FORWARD_START (cap_before_forward)",
     "experiment_intraday_overlay_dev.py": "dev / semi_holdout only, through select_segment",
     "evaluate_forward_holdout.py": "the one forward evaluation (item 54)",
+    "rehearse_january_runs.py": "panel and dataset cut before FORWARD_START (before_forward), dev segment only (item 88)",
     "check_forward_minute_coverage.py": "bar counts only (ok / incomplete / missing), no prices or labels",
     "check_intraday_raw.py": "data-quality checks only (coverage, reconcile, bar times), no labels",
     "ingest_kiwoom_minute_chart.py": "writer (API -> raw files)",
@@ -68,3 +69,11 @@ def test_diagnostic_caps_before_building_labels() -> None:
     source = (SCRIPTS_DIR / "intraday_ic_diagnostic.py").read_text(encoding="utf-8")
     main = source[source.index("def main"):]
     assert main.index("cap_before_forward(") < main.index("add_labels_and_benchmarks(")
+
+
+def test_rehearsal_cuts_forward_rows() -> None:
+    from scripts.rehearse_january_runs import before_forward
+
+    frame = pd.DataFrame({"trade_date": pd.to_datetime(["2026-09-22", "2026-09-23", "2026-09-24", "2026-10-02"])})
+    kept = before_forward(frame)
+    assert pd.to_datetime(kept["trade_date"]).max() < pd.Timestamp(FORWARD_START) and len(kept) == 2

@@ -547,6 +547,47 @@ class KiwoomClient:
 
         return rows
 
+    def get_stock_list(self, market_type: str = "0", *, max_pages: int = 20) -> list[Mapping[str, Any]]:
+        """Return the ``ka10099`` (종목정보 리스트) rows for one market, raw.
+
+        ``mrkt_tp`` "0" = KOSPI (``config/kiwoom-rest-api-spec.json``). Each row
+        carries ``code``, ``name`` and ``regDay`` (상장일). Current listings only --
+        delisted stocks are not in this list. Continuation pages are followed.
+        """
+        token = self.authenticate()
+        rows: list[Mapping[str, Any]] = []
+        cont_yn, next_key = "N", ""
+        for page in range(max_pages):
+            if page > 0:
+                time.sleep(self._PAGE_REQUEST_INTERVAL_SECONDS)
+            headers = self._json_headers(
+                **{
+                    "api-id": "ka10099",
+                    "authorization": f"Bearer {token.value}",
+                    "cont-yn": cont_yn,
+                    "next-key": next_key,
+                }
+            )
+            response, response_headers = self._post(
+                self._STOCK_INFO_PATH, {"mrkt_tp": market_type}, headers, stage="stock_list"
+            )
+            page_rows = response.get("list", [])
+            if not isinstance(page_rows, list):
+                raise KiwoomTransportError("list must be a list.")
+            rows.extend(page_rows)
+            cont_yn = str(response_headers.get("cont-yn", "N")).strip().upper()
+            next_key = str(response_headers.get("next-key", "")).strip()
+            if cont_yn != "Y" or not next_key or not page_rows:
+                break
+        else:
+            logger.warning(
+                "Kiwoom stock_list mrkt_tp=%s stopped at max_pages=%d with continuation "
+                "still available -- list may be incomplete.",
+                market_type,
+                max_pages,
+            )
+        return rows
+
     def get_index_daily_chart(
         self,
         inds_cd: str,

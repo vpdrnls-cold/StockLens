@@ -197,3 +197,60 @@ def test_gate_stops(tmp_path) -> None:
     out.mkdir()
     (out / rg.SUMMARY_FILE).write_text("x")
     assert rg.gate(out, "2026-09-24", TOP50, TOP50, missing)[0] == 3                # runs once
+
+
+# --- item 86 data cleaning (D1~D4 = a) ------------------------------------------
+
+from datetime import date, timedelta  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+def _bars(n: int, start: date = date(2016, 1, 4)):
+    return [SimpleNamespace(trade_date=start + timedelta(days=i), open_price=1000, high_price=1010,
+                            low_price=990, close_price=1000, volume=100) for i in range(n)]
+
+
+def test_k_otc_rows_before_listing_dropped_only_for_listed_exceptions() -> None:
+    bars = _bars(5, date(2014, 11, 11))
+    out = nc.excluded_dates("018260", bars)
+    assert out == {date(2014, 11, 11), date(2014, 11, 12), date(2014, 11, 13)}
+    assert nc.excluded_dates("035420", bars) == set()  # KOSDAQ-era history is kept (D1 a)
+
+
+def test_limit_breach_drops_label_and_feature_windows() -> None:
+    bars = _bars(60)
+    for b in bars[30:]:
+        b.close_price = b.open_price = 400            # -60% at position 30 (unadjusted split)
+        b.high_price, b.low_price = 410, 390
+    out = nc.excluded_dates("000001", bars)
+    pos = {b.trade_date: i for i, b in enumerate(bars)}
+    assert sorted(pos[d] for d in out) == list(range(25, 51))  # 5 before .. 20 after
+    assert nc.limit_breach_positions(bars) == [30]
+
+
+def test_halt_drops_the_day_and_labels_that_trade_on_it() -> None:
+    bars = _bars(20)
+    bars[10] = SimpleNamespace(trade_date=bars[10].trade_date, open_price=1000, high_price=1000,
+                               low_price=1000, close_price=1000, volume=0)
+    pos = {b.trade_date: i for i, b in enumerate(bars)}
+    assert sorted(pos[d] for d in nc.excluded_dates("000001", bars)) == [5, 9, 10]
+    bars[11].volume = 0  # zero volume but not a flat bar -> not a halt
+    assert sorted(pos[d] for d in nc.excluded_dates("000001", bars)) == [5, 9, 10]
+
+
+def test_apply_cleaning_drops_matching_rows_only() -> None:
+    bars = _bars(5, date(2014, 11, 11))
+    data = pd.DataFrame({"stock_code": ["018260"] * 5 + ["005930"] * 5,
+                         "trade_date": [b.trade_date for b in bars] * 2, "x": 1.0})
+    cleaned, dropped = nc.apply_cleaning(data, {"018260": bars, "005930": bars})
+    kept = set(pd.to_datetime(cleaned[cleaned["stock_code"] == "018260"]["trade_date"]))
+    assert dropped == 3 and len(cleaned) == 7 and kept == {pd.Timestamp("2014-11-14"), pd.Timestamp("2014-11-15")}
+
+
+def test_cleaning_ignores_bars_after_the_cut() -> None:
+    bars = _bars(40)
+    cut = bars[:25]
+    later = [*cut, *_bars(15, bars[25].trade_date)]
+    for b in later[25:]:
+        b.close_price = 100  # a breach after the cut
+    assert nc.excluded_dates("000001", cut) == nc.excluded_dates("000001", later[:25])

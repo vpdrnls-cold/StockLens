@@ -15,8 +15,12 @@ What it does (item 84 B~E)
      the KOSPI200 (200 stocks) up to 2025-08-31 with at least 100 trees, early stopping
      on the last year of that range (purged).
   2. Both models score all 200 stocks on the dev dates; bars are cut at ``--dev-end``.
-  3. Six candidates (M0/M1 x P0/P1/P2) through the buffered engine with real costs,
-     5 rebalance start offsets each, excess over the same-holding equal-weight universe.
+     Item 86 cleaning (K-OTC rows, price-limit breaches, halts) is applied to the 200-stock
+     dataset first, so it holds for M1's training and for every candidate's dev evaluation.
+  3. Six candidates (M0/M1 x P0/P1/P2) through the point-in-time engine (item 87: no
+     future prices in the stock choice, halted holdings kept, delisted ones exit at their
+     last close) with real costs, 5 rebalance start offsets each, excess over the
+     same-holding equal-weight universe built on the same rule.
   4. Selection rule A-3 -> chosen candidate (baseline M0P0 if none passes).
   5. forward2 length from the chosen model's dev IC standard deviation (A-5).
   6. If M1 is chosen: one final M1 retrain through ``--dev-end`` and its fingerprint is
@@ -42,7 +46,13 @@ import pandas as pd
 import xgboost
 
 from scripts import evaluate_forward_holdout as fh
-from scripts.evaluate_cross_sectional_holdout import eligible, ic_block, load_holdout_dataset, period_rows
+from scripts.evaluate_cross_sectional_holdout import (
+    eligible,
+    ic_block,
+    load_holdout_dataset,
+    period_rows,
+    truncate_bars,
+)
 from scripts.run_ml_backtest import (
     BUFFERED_CONFIG,
     DETERMINISTIC_PARAMS,
@@ -52,10 +62,14 @@ from scripts.run_ml_backtest import (
     frozen_model_fingerprint,
     train_frozen_model,
 )
-from scripts.walk_forward_backtest_compare import universe_average_gross
 from src.backtest.baseline import calculate_performance
-from src.backtest.buffered import run_buffered_backtest_with_turnover
+from src.backtest.point_in_time import (
+    run_point_in_time_backtest,
+    universe_average_gross_pit,
+    zero_value_sensitivity,
+)
 from src.backtest.daily_equity import daily_max_drawdown
+from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
 from src.eval import next_cycle as nc
 from src.eval.test_lock import TestSetLockedError, confirm_final_test_use
@@ -101,7 +115,8 @@ def train_m1(dataset: pd.DataFrame, end_date: str) -> TrainedModel:
 
 
 def candidate_phases(part: pd.DataFrame, candidate: str, score_col: str) -> pd.DataFrame:
-    """Buffered engine, real costs, every start offset; excess over the same-holding universe."""
+    """Point-in-time engine (item 87), real costs, every start offset; excess over the
+    same-holding, same-rule equal-weight universe."""
     _, p = nc.split_candidate(candidate)
     # 200 stocks with different listing histories -> partial-universe mode (as for top50).
     config = replace(BUFFERED_CONFIG, holding_days=p.holding_days, buffer_multiplier=p.buffer_multiplier,
@@ -112,14 +127,20 @@ def candidate_phases(part: pd.DataFrame, candidate: str, score_col: str) -> pd.D
         sub = fh.phase_offset_part(part, k)
         data = _to_data_by_stock(sub)
         scores = sub[["trade_date", "stock_code", score_col]].rename(columns={score_col: "predicted_return"})
-        net, turnover = run_buffered_backtest_with_turnover(data, config, score_fn=make_model_score_fn(scores), top_n=p.top_n)
+        net, turnover = run_point_in_time_backtest(data, config, make_model_score_fn(scores), p.top_n)
         perf = calculate_performance(net)
-        univ = float((1.0 + universe_average_gross(data, holding=p.holding_days)).prod() - 1.0)
+        univ = float((1.0 + universe_average_gross_pit(data, holding=p.holding_days)).prod() - 1.0)
         rows.append({"candidate": candidate, "offset": k, "start": pd.to_datetime(sub["trade_date"]).min(),
                      "periods": int(perf["period_count"]), "net_cum": perf["total_return"],
                      "univ_ew_gross": univ, "excess_vs_univ": perf["total_return"] - univ,
                      "mdd": perf["max_drawdown"], "mdd_daily": daily_max_drawdown(net, data),
-                     "entries_per_period": turnover["entries_per_period"]})
+                     "entries_per_period": turnover["entries_per_period"],
+                     "failed_entries": turnover["failed_entries"],
+                     "locked_position_periods": turnover["locked_position_periods"],
+                     "delisted_exits": turnover["delisted_exits"],
+                     "stale_at_end": len(turnover["stale_at_end"]),
+                     # decision 3 (item 87): report only -- positions still without a price at the end valued at 0
+                     "net_cum_stale_zero": zero_value_sensitivity(net, turnover["stale_at_end"])})
     return pd.DataFrame(rows)
 
 
@@ -146,19 +167,37 @@ def main(argv=None) -> int:
         print(f"STOP: {locked}\nNo dev data was read.")
         return 5
 
-    codes = tuple(get_universe("kospi200"))
-    dataset, skipped = load_holdout_dataset(codes, end=args.dev_end)
-    print(f"KOSPI200: {len(codes) - len(skipped)} stocks built, skipped (history too short): {skipped or 'none'}")
+    run_grid(m0, nc.DEV_START, args.dev_end, out, Path(args.model_out))
+    return 0
 
-    m1 = train_m1(dataset, nc.selection_train_end())
-    print(f"M1 (selection): best_iteration={m1.best_iteration}, trained to {nc.selection_train_end()}")
+
+def run_grid(m0: TrainedModel, dev_start: str, dev_end: str, out: Path, model_out: Path, *,
+             show: bool = True, force_final_m1: bool = False) -> dict:
+    """Items 84/86/87 from data loading to the written files (split out of ``main``, item 88).
+
+    ``main`` calls it once with the real dev range after its gates. The January rehearsal
+    (``scripts/rehearse_january_runs.py``) calls it on validation dates with ``show=False``
+    (no numbers printed) and ``force_final_m1=True`` (exercise the final-retrain branch).
+    The caller must cut nothing: bars are cut at ``dev_end`` here.
+    """
+    _print = print if show else (lambda *a, **k: None)
+    codes = tuple(get_universe("kospi200"))
+    dataset, skipped = load_holdout_dataset(codes, end=dev_end)
+    _print(f"KOSPI200: {len(codes) - len(skipped)} stocks built, skipped (history too short): {skipped or 'none'}")
+    storage = HistoricalStorage("data")
+    bars_by_code = {c: truncate_bars(storage.load_daily_bars(c), dev_end) for c in codes}
+    dataset, n_dropped = nc.apply_cleaning(dataset, bars_by_code)
+    _print(f"item 86 cleaning (K-OTC, price-limit breaches, halts): {n_dropped} rows dropped")
+
+    m1 = train_m1(dataset, nc.selection_train_end(dev_start))
+    _print(f"M1 (selection): best_iteration={m1.best_iteration}, trained to {nc.selection_train_end(dev_start)}")
     models = {"M0": m0, "M1": m1}
     df = dataset
     for name, model in models.items():
         preds = predictions_for_dataset(model, dataset).rename(columns={"predicted_return": f"score_{name}"})
         df = df.merge(preds, on=["trade_date", "stock_code"], how="left")
 
-    dev_all = period_rows(df, nc.DEV_START, args.dev_end)
+    dev_all = period_rows(df, dev_start, dev_end)
     ic_rows, ic_sd, diag = [], {}, []
     for name in nc.MODELS:
         part, dropped = eligible(dev_all.rename(columns={f"score_{name}": "score"}), nc.MIN_STOCKS)
@@ -180,37 +219,39 @@ def main(argv=None) -> int:
     length = nc.forward2_length(ic_sd[chosen_model])
 
     out.mkdir(parents=True, exist_ok=True)
-    final = {"candidate": chosen, "model": chosen_model, "dev_start": nc.DEV_START, "dev_end": args.dev_end,
+    final = {"candidate": chosen, "model": chosen_model, "dev_start": dev_start, "dev_end": dev_end,
              "forward2_trading_days": length, "forward2_mode": "verdict" if length else "harm_check_only",
              "dev_ic_sd": ic_sd[chosen_model], "created": datetime.now().isoformat(timespec="seconds"),
              "xgboost_version": xgboost.__version__}
-    if chosen_model == "M1":
-        m1_final = train_m1(dataset, args.dev_end)
+    if chosen_model == "M1" or force_final_m1:
+        m1_final = train_m1(dataset, dev_end)
         final.update(best_iteration=m1_final.best_iteration, fingerprint=frozen_model_fingerprint(m1_final),
-                     train_end=args.dev_end)
+                     train_end=dev_end)
     else:
         final.update(best_iteration=m0.best_iteration, fingerprint=frozen_model_fingerprint(m0),
                      note="M0 kept: the existing frozen model, no retrain")
-    Path(args.model_out).write_text(json.dumps(final, ensure_ascii=False, indent=1), encoding="utf-8")
+    model_out.write_text(json.dumps(final, ensure_ascii=False, indent=1), encoding="utf-8")
 
     phases.to_csv(out / "phases.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(ic_rows).to_csv(out / "dev_ic.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(diag).to_csv(out / "diagnostics.csv", index=False, encoding="utf-8-sig")
     decision.to_csv(out / SUMMARY_FILE, index=False, encoding="utf-8-sig")  # written last = the one-run marker
 
-    print("\n" + "=" * 100)
-    print(f"NEXT-CYCLE GRID (item 84, once)   dev {nc.DEV_START} ~ {args.dev_end}, KOSPI200")
-    print("=" * 100)
-    print(pd.DataFrame(ic_rows).to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
-    print("\ndiagnostics (not used for the decision):")
-    print(pd.DataFrame(diag).to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
-    print("\nselection (A-3: beats baseline on >= 4 of 5 offsets and mean excess > 0):")
-    print(decision.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
-    print(f"\nCHOSEN: {chosen}   forward2: {length or 'harm check only (500 days not enough)'}"
+    _print("\n" + "=" * 100)
+    _print(f"NEXT-CYCLE GRID (item 84, once)   dev {dev_start} ~ {dev_end}, KOSPI200")
+    _print("=" * 100)
+    _print(pd.DataFrame(ic_rows).to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    _print("\ndiagnostics (not used for the decision):")
+    _print(pd.DataFrame(diag).to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    _print("\nselection (A-3: beats baseline on >= 4 of 5 offsets and mean excess > 0):")
+    _print(decision.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    _print(f"\nCHOSEN: {chosen}   forward2: {length or 'harm check only (500 days not enough)'}"
           f" trading days (dev IC sd {ic_sd[chosen_model]:.4f})")
-    print(f"model record: {args.model_out}   (production path not switched here)")
-    print(f"saved: {out}/")
-    return 0
+    _print(f"model record: {model_out}   (production path not switched here)")
+    _print(f"saved: {out}/")
+    return {"chosen": chosen, "forward2_trading_days": length, "final": final, "phases": phases,
+            "decision": decision, "ic": pd.DataFrame(ic_rows), "diagnostics": pd.DataFrame(diag),
+            "rows_dropped_by_cleaning": n_dropped, "dataset_rows": len(dataset)}
 
 
 if __name__ == "__main__":

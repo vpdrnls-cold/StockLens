@@ -329,11 +329,23 @@ def main() -> None:
         print(f"Forward holdout not evaluated: {locked}")
         return
 
+    report_and_save(part, Path(args.out), trained.best_iteration)
+
+
+def report_and_save(part: pd.DataFrame, out: Path, best_iteration: int, *, run_name: str = "forward_holdout",
+                    show: bool = True, runs_dir: Path | None = None) -> dict:
+    """Everything after the forward rows are selected: metrics, verdicts, files, run log.
+
+    Split out of ``main`` (item 88) so the January rehearsal runs this exact code on an
+    already-used period. ``show=False`` prints no numbers (the rehearsal checks structure only).
+    Returns the paths written and the verdict dict.
+    """
+    _print = print if show else (lambda *a, **k: None)
     cov = float(part["has_intraday"].mean())
-    print(f"forward period {part['trade_date'].min():%Y-%m-%d} ~ {part['trade_date'].max():%Y-%m-%d}, "
+    _print(f"forward period {part['trade_date'].min():%Y-%m-%d} ~ {part['trade_date'].max():%Y-%m-%d}, "
           f"{part['trade_date'].nunique()} decision dates (min {FORWARD_MIN_DATES}), intraday coverage {cov:.1%}")
     if cov < MIN_INTRADAY_COVERAGE:
-        print(f"WARNING: intraday coverage below {MIN_INTRADAY_COVERAGE:.0%} -- check the nightly ingest logs "
+        _print(f"WARNING: intraday coverage below {MIN_INTRADAY_COVERAGE:.0%} -- check the nightly ingest logs "
               "before trusting the overlay comparison.")
 
     res, trades, ics = evaluate(part)
@@ -342,7 +354,6 @@ def main() -> None:
     ties = summarize_ties(sens, res, part)
     phases = phase_sensitivity(part)
 
-    out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     res.to_csv(out / "forward_results.csv", index=False, encoding="utf-8-sig")
     monthly = monthly_ic(ics)
@@ -351,25 +362,25 @@ def main() -> None:
     ties.to_csv(out / "forward_tie_sensitivity.csv", index=False, encoding="utf-8-sig")
     phases.to_csv(out / "forward_phase_sensitivity.csv", index=False, encoding="utf-8-sig")
 
-    print("\n" + "=" * 112)
-    print(f"FORWARD HOLDOUT (once)   top_n={TOP_N}, buffer={BUFFER_MULTIPLIER}, overlay w={OVERLAY_W}, "
+    _print("\n" + "=" * 112)
+    _print(f"FORWARD HOLDOUT (once)   top_n={TOP_N}, buffer={BUFFER_MULTIPLIER}, overlay w={OVERLAY_W}, "
           f"{len(STOCK_CODES)} stocks")
-    print("=" * 112)
-    print(res.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
-    print("\nmonthly IC (info only):")
-    print(monthly.to_string(float_format=lambda x: f"{x:+.4f}"))
+    _print("=" * 112)
+    _print(res.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    _print("\nmonthly IC (info only):")
+    _print(monthly.to_string(float_format=lambda x: f"{x:+.4f}"))
 
-    print(f"\ntie-break sensitivity (info only, not used by D2/I6): net_cum over {TIE_PERMUTATIONS} random "
+    _print(f"\ntie-break sensitivity (info only, not used by D2/I6): net_cum over {TIE_PERMUTATIONS} random "
           f"stock orders (seed {TIE_SEED}); code_asc = the reported rule")
-    print(ties.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
-    print(f"\nrebalance-phase sensitivity (info only, not used by D2/I6): start shifted by {list(PHASE_OFFSETS)} "
+    _print(ties.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    _print(f"\nrebalance-phase sensitivity (info only, not used by D2/I6): start shifted by {list(PHASE_OFFSETS)} "
           "trading days; offset 0 = the reported schedule")
-    print(phases.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
+    _print(phases.to_string(index=False, float_format=lambda x: f"{x:+.4f}"))
 
-    print("\n" + "=" * 112)
-    print("PRE-REGISTERED DECISIONS")
-    print("=" * 112)
-    print(f"D2  IC(daily) = {v['ic_daily']:+.4f}  -> "
+    _print("\n" + "=" * 112)
+    _print("PRE-REGISTERED DECISIONS")
+    _print("=" * 112)
+    _print(f"D2  IC(daily) = {v['ic_daily']:+.4f}  -> "
           + ("NOT REJECTED: daily signal present out of sample" if v["d2_not_rejected"] else "REJECTED: no daily signal"))
     i6_text = {
         "not_rejected": "NOT REJECTED",
@@ -377,25 +388,29 @@ def main() -> None:
         "withheld": f"WITHHELD: intraday coverage {v['intraday_coverage']:.1%} < {MIN_INTRADAY_COVERAGE:.0%}, "
                     "retest next cycle",
     }[v["i6_status"]]
-    print(f"I6  IC(overlay) - IC(daily) = {v['ic_diff']:+.4f}  -> {i6_text}")
-    print("PRODUCTION PATH (item 65): unchanged by this look alone -- forward2 must point the same way.")
-    print("FORWARD2 CANDIDATE: " + ("daily + overlay w=0.5" if v["overlay_forward2_candidate"]
+    _print(f"I6  IC(overlay) - IC(daily) = {v['ic_diff']:+.4f}  -> {i6_text}")
+    _print("PRODUCTION PATH (item 65): unchanged by this look alone -- forward2 must point the same way.")
+    _print("FORWARD2 CANDIDATE: " + ("daily + overlay w=0.5" if v["overlay_forward2_candidate"]
           else "daily only" if v["d2_not_rejected"] else "nothing -- see CURRENT_STATUS item 53 case C/D"))
-    print("Limit: ~12 non-overlapping 5-day periods, SE(IC) ~ 0.06 -- 'not rejected' is not proof.")
+    _print("Limit: ~12 non-overlapping 5-day periods, SE(IC) ~ 0.06 -- 'not rejected' is not proof.")
 
-    recorder = RunRecorder("forward_holdout", meta={
+    recorder = RunRecorder(run_name, meta={
         "script": "scripts/evaluate_forward_holdout.py", "top_n": TOP_N, "buffer": BUFFER_MULTIPLIER,
-        "overlay_w": OVERLAY_W, "best_iteration": trained.best_iteration, **v,
+        "overlay_w": OVERLAY_W, "best_iteration": best_iteration, **v,
         "tie_permutations": TIE_PERMUTATIONS, "tie_seed": TIE_SEED, "phase_offsets": list(PHASE_OFFSETS),
     })
     for name, t in trades.items():
         recorder.add_trades("forward", name, t)
     for name, ic in ics.items():
         recorder.add_ic("forward", name, ic)
-    recorder.save()
-    print(f"\nsaved: {out / 'forward_results.csv'}, {out / 'forward_monthly_ic.csv'}, "
+    recorder.save(runs_dir) if runs_dir is not None else recorder.save()
+    _print(f"\nsaved: {out / 'forward_results.csv'}, {out / 'forward_monthly_ic.csv'}, "
           f"{out / 'forward_tie_sensitivity.csv'}, {out / 'forward_tie_permutations.csv'}, "
           f"{out / 'forward_phase_sensitivity.csv'}")
+
+    return {"verdicts": v, "files": [out / f for f in (
+        "forward_results.csv", "forward_monthly_ic.csv", "forward_tie_permutations.csv",
+        "forward_tie_sensitivity.csv", "forward_phase_sensitivity.csv")], "results": res}
 
 
 if __name__ == "__main__":

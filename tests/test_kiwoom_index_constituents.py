@@ -45,3 +45,25 @@ def test_get_index_constituents_follows_continuation(
     assert first["headers"]["cont-yn"] == "N"
     assert second["headers"]["cont-yn"] == "Y"
     assert second["headers"]["next-key"] == "k2"
+
+
+def test_get_stock_list_follows_continuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(kiwoom_client_module.time, "sleep", lambda seconds: None)
+    session = FakeSession(
+        [
+            TOKEN,
+            FakeResponse({"list": [{"code": "005930", "regDay": "19750611"}], "return_code": 0},
+                         headers={"cont-yn": "Y", "next-key": "k2"}),
+            FakeResponse({"list": [{"code": "018260", "regDay": "20141114"}], "return_code": 0},
+                         headers={"cont-yn": "N", "next-key": ""}),
+        ]
+    )
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    rows = client.get_stock_list()
+
+    assert [(r["code"], r["regDay"]) for r in rows] == [("005930", "19750611"), ("018260", "20141114")]
+    first, second = session.calls[1], session.calls[2]
+    assert first["url"].endswith("/api/dostk/stkinfo") and first["json"] == {"mrkt_tp": "0"}
+    assert first["headers"]["api-id"] == "ka10099"
+    assert second["headers"]["cont-yn"] == "Y" and second["headers"]["next-key"] == "k2"

@@ -12,6 +12,7 @@ synthetic data.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from math import erf, sqrt
 
 import numpy as np
@@ -25,6 +26,15 @@ DEV_START = INTRADAY_DATA_START          # selection dev starts here (2025-09-01
 INTERNAL_VALIDATION_YEARS = 1            # M1 early stopping: last year of its training range
 PURGE_DAYS = 5                           # 5-day label overlap (split_by_time purge, item 65)
 MIN_STOCKS = 50                          # dates with fewer scored + labeled stocks are dropped (as item 79)
+
+# --- item 86 data cleaning (D1~D4 = a, 2026-10-08) -----------------------------
+# Applied to M1 training and to the dev evaluation of every candidate (M0 and M1);
+# never to the frozen M0's own training or to the forward evaluation (D4).
+NON_EXCHANGE_BEFORE = {"018260": "2014-11-14"}  # D1: K-OTC trading before the KRX listing (items 58, 86)
+LIMIT_CHANGE_DATE = date(2015, 6, 15)           # KRX daily price limit 15% -> 30%
+LIMIT_MARGIN = 0.005
+LABEL_SPAN = 5      # D2: rows whose label (T+1 open .. T+5 close) crosses a limit breach
+FEATURE_SPAN = 20   # D2: rows whose 20-day features include a limit breach (breach day .. +20)
 
 # --- C. candidates ----------------------------------------------------------
 MIN_TREES = 100                          # M1: no early stop before 100 trees
@@ -157,14 +167,62 @@ def m1_training_frames(dataset: pd.DataFrame, end_date: str) -> tuple[pd.DataFra
     return fit, val
 
 
-def selection_train_end() -> str:
-    """Last date M1 may train on during selection: the day before DEV_START."""
-    return (pd.Timestamp(DEV_START) - pd.Timedelta(days=1)).date().isoformat()
+def selection_train_end(dev_start: str = DEV_START) -> str:
+    """Last date M1 may train on during selection: the day before the dev start."""
+    return (pd.Timestamp(dev_start) - pd.Timedelta(days=1)).date().isoformat()
 
 
 def dev_needs_forward_evaluation(dev_end: str) -> bool:
     """True when the dev range reaches the forward period (readable only after the one forward look)."""
     return pd.Timestamp(dev_end) >= pd.Timestamp(FORWARD_START)
+
+
+def price_limit(day: date) -> float:
+    return 0.15 if day < LIMIT_CHANGE_DATE else 0.30
+
+
+def is_halted(bar) -> bool:
+    """D3: zero volume with a flat bar = a trading-halt day filled with the previous price."""
+    return bar.volume == 0 and bar.open_price == bar.high_price == bar.low_price == bar.close_price
+
+
+def limit_breach_positions(bars) -> list[int]:
+    """Positions whose close moved more than the daily price limit from the previous close (D2)."""
+    return [i for i in range(1, len(bars))
+            if bars[i - 1].close_price > 0
+            and abs(bars[i].close_price / bars[i - 1].close_price - 1) > price_limit(bars[i].trade_date) + LIMIT_MARGIN]
+
+
+def excluded_dates(stock_code: str, bars) -> set[date]:
+    """Trade dates of one stock to drop from the dataset (item 86 D1~D3). ``bars`` date-sorted.
+
+    D1  bars before the KRX listing for non-exchange (K-OTC) history.
+    D2  a close-to-close move beyond the price limit (an unadjusted split or similar):
+        rows whose label spans it (5 days before) and whose features include it (the day + 20).
+    D3  halted days, and rows whose label enters (T+1) or exits (T+5) on a halted day.
+    Dropped rows also leave the engine's price table, so no entry or exit happens on them.
+    Callers pass bars already cut at the last date they may read.
+    """
+    dates = [b.trade_date for b in bars]
+    out: set[date] = set()
+    cutoff = NON_EXCHANGE_BEFORE.get(stock_code)
+    if cutoff:
+        out.update(d for d in dates if d < date.fromisoformat(cutoff))
+    n = len(dates)
+    for p in limit_breach_positions(bars):
+        out.update(dates[max(0, p - LABEL_SPAN):min(n, p + FEATURE_SPAN + 1)])
+    for h, bar in enumerate(bars):
+        if is_halted(bar):
+            out.update(dates[j] for j in (h, h - 1, h - LABEL_SPAN) if 0 <= j < n)
+    return out
+
+
+def apply_cleaning(dataset: pd.DataFrame, bars_by_code: dict) -> tuple[pd.DataFrame, int]:
+    """``dataset`` without the item 86 exclusions, and how many rows were dropped."""
+    drop = {(code, pd.Timestamp(d)) for code, bars in bars_by_code.items() for d in excluded_dates(code, bars)}
+    keys = list(zip(dataset["stock_code"].astype(str), pd.to_datetime(dataset["trade_date"])))
+    keep = [k not in drop for k in keys]
+    return dataset[keep], len(keep) - sum(keep)
 
 
 def decile_spread(part: pd.DataFrame, score_col: str, label_col: str = "target_return_5d") -> float:
