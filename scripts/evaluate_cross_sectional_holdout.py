@@ -137,15 +137,18 @@ def truncate_bars(bars, end: str = TEST_END_DATE):
     return [b for b in bars if b.trade_date <= last]
 
 
-def load_holdout_dataset(codes: tuple[str, ...], storage: HistoricalStorage | None = None) -> tuple[pd.DataFrame, list[str]]:
-    """Feature/label dataset + open/close prices for ``codes``, bars cut at TEST_END_DATE.
+def load_holdout_dataset(codes: tuple[str, ...], storage: HistoricalStorage | None = None,
+                         end: str = TEST_END_DATE) -> tuple[pd.DataFrame, list[str]]:
+    """Feature/label dataset + open/close prices for ``codes``, bars cut at ``end`` (default TEST_END_DATE).
+
+    ``end`` is overridden only by scripts/run_next_cycle_grid.py (item 84 dev end).
 
     Stocks whose (cut) history is too short to build a dataset are skipped and returned.
     """
     storage = storage or HistoricalStorage("data")
     parts, prices, skipped = [], [], []
     for code in codes:
-        bars = truncate_bars(storage.load_daily_bars(code))
+        bars = truncate_bars(storage.load_daily_bars(code), end)
         try:
             part = build_combined_dataset({code: bars}) if bars else pd.DataFrame()
         except ValueError:
@@ -163,8 +166,8 @@ def load_holdout_dataset(codes: tuple[str, ...], storage: HistoricalStorage | No
     dataset["trade_date"] = pd.to_datetime(dataset["trade_date"])
     dataset[list(FEATURE_COLUMNS)] = dataset[list(FEATURE_COLUMNS)].replace([np.inf, -np.inf], np.nan)
     dataset = dataset.merge(pd.DataFrame(prices), on=["trade_date", "stock_code"], how="left", validate="one_to_one")
-    if pd.to_datetime(dataset["trade_date"]).max() > pd.Timestamp(TEST_END_DATE):
-        raise AssertionError("holdout dataset reaches past TEST_END_DATE")
+    if pd.to_datetime(dataset["trade_date"]).max() > pd.Timestamp(end):
+        raise AssertionError(f"holdout dataset reaches past {end}")
     return dataset, skipped
 
 

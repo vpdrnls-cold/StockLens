@@ -1551,3 +1551,18 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과�
 
 - **해석 한계**: dev는 약 1.3년(시작일 5개)이라 6개 비교도 우연 선택 위험이 남음 — 교체 조건(A-3)이 보수적인 이유. dev 앞부분은 test·항목 79에서 본 날짜. 생존편향(2026-10-04 구성). 보유 20일은 dev에서 독립 기간 수가 적음.
 - **확정 시 남긴 실행 조건**: C의 M1·P1·P2 값은 그대로 확정. B의 dev 읽기에 필요한 test 잠금 처리(환경변수 사용 등)는 실행 시점에 재훈 확인 후. "트리 100개 전 조기종료 금지"는 XGBoost 기본 옵션에 없어 콜백 구현·테스트 필요(실행 단계).
+
+85. **항목 84 실행 준비 코드 (2026-10-08, 엔지니어링 — 실험 아님, dev·forward 데이터 미열람)**
+
+- **목적**: 1월 forward 평가 직후 항목 84를 사전등록 그대로 **명령 한 번**으로 돌리게 해, 결과를 보며 코드를 짜는 일을 막음. 12월 환경 고정 전 코드 변경(항목 78 원칙).
+- **추가·변경**
+  - `src/eval/next_cycle.py`(새): 항목 84의 단일 출처 — 후보 6개·포트폴리오(P0 10/5일, P1 20/10일, P2 30/20일, buffer 3.0)·시작일 0~4·`MIN_TREES` 100·dev 시작(`INTRADAY_DATA_START`)·purge 5, 선택 규칙 `decide()`(A-3), forward2 기간 `forward2_power()`/`forward2_length()`(A-5, 정규 근사, 항목 79 t와 같은 식), M1 학습 구간 `m1_training_frames()`(마지막 1년 내부 검증, 두 부분 모두 마지막 5거래일 purge), 진단 `decile_spread()`·`bottom_avoid_excess()`(판정 미사용).
+  - `src/models/predict.py`: `MinTreesEarlyStopping` 콜백 + `train_model(..., min_trees=None)`. **기본값 None이면 기존 경로 그대로**(고정 모델 지문 `f397507a…f5f6` MATCH, W3 +65.0% / −2.2% MATCH 확인).
+  - `scripts/walk_forward_backtest_compare.py`: `universe_average_gross(..., holding=5)` — 보유 10·20일 비교용, 기본값이면 기존과 동일(테스트로 확인).
+  - `scripts/evaluate_cross_sectional_holdout.py`: `load_holdout_dataset(..., end=TEST_END_DATE)` — 기본값 그대로, 항목 79 동작 불변.
+  - `scripts/run_next_cycle_grid.py`(새, 1회 실행): M0(고정 모델, 지문 불일치면 중단) + M1(200종목, 2025-08-31까지, 트리 ≥100) → 200종목 dev 점수 → 후보 6개 × 시작일 5개(실제 비용, 같은 보유기간 동일가중 대비) → `decide()` → 채택 모델의 dev IC 표준편차로 forward2 기간 → M1 채택 시 dev 끝까지 최종 재학습·지문을 `config/next_cycle_model.json`에 기록(운용 경로 전환은 안 함). `reports/next_cycle_grid/summary.csv`를 마지막에 써서 1회 표시.
+- **실행 관문 (데이터를 읽기 전에 모두 확인)**: summary 있으면 중단(1회), `STOCKLENS_UNIVERSE=top50` 아니면 중단, **`reports/forward_holdout/forward_results.csv`(forward 1회 평가 결과)가 없으면 중단** — forward 전에는 짧은 dev로 미리 돌리는 것도 막음, `--dev-end`는 forward 구간 날짜여야 함(사전등록: dev 끝 = forward 평가일), 미래 날짜 거부, M0 지문 불일치 중단, `confirm_final_test_use`(test 잠금) 통과 필요 — **잠금 환경변수는 실행 시 재훈 확인 후**.
+- **구현 세부 (사전등록에 없던 것을 결과 보기 전에 정함)**: dev 날짜별 최소 종목 수 50(항목 79와 같음), 동점 평균 초과수익 후보는 `CANDIDATES` 순서로 선택, forward2 기간에 쓰는 IC 표준편차는 채택 후보 모델의 dev 값(날짜별 IC 결측은 0, 항목 79 방식), 200종목이라 엔진은 partial-universe 모드, 보유 10·20일도 시작일 오프셋은 0~4(항목 84 "시작일 5개").
+- **forward 잠금 규칙과의 관계**: forward 구간은 평가(1회) 전까지 `evaluate_forward_holdout.py`만 읽음 — 그대로. 평가 후 forward는 다음 사이클 dev가 되고(항목 78), 그때 읽는 경로는 이 스크립트뿐(CLAUDE.md 3절에 한 줄 추가).
+- **테스트**: `tests/test_next_cycle_grid.py` **17개** — 고정값, forward2 검정력(항목 79 수치 39%·61% 재현)·기간 규칙(0.155→500, 0.10→250, 0.20→없음), 선택 규칙(아무도 통과 못 하면 기준선·4승+평균>0·평균≤0 탈락·기준선 음수여도 0 문턱 유지·동점 순서·누락 오류), M1 구간 경계·purge·**end 이후 값 바꿔도 불변**, 트리 하한(일반 조기종료 <99 vs 하한 ≥99, 예측이 선택된 트리만 사용), 보유기간별 동일가중, 후보별 엔진 실행, 진단 방향, 관문 8가지. 전체 442 + 17 = **459개 통과**(core5·top50 둘 다).
+- **1월 실행 명령 (forward 평가 직후, 재훈 확인 후)**: `STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_FINAL_TEST=1 PYTHONPATH=. .venv/bin/python scripts/run_next_cycle_grid.py --dev-end <forward 평가일>`

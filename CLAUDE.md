@@ -46,6 +46,7 @@ buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --
   forward를 여는 새 경로를 추가하지 말 것. 분봉 raw(`data/raw/kiwoom/ka10080`)를 읽는 스크립트는
   `tests/test_forward_access_guard.py` allowlist에 있어야 한다. 날짜로 자르지 않으면 forward까지 읽으므로,
   forward를 읽지 않는다는 것(날짜 상한 등)을 확인한 뒤에만 allowlist에 추가한다(항목 65). forward 결과 단독으로 운용 경로를 바꾸지 않는다(forward2 확인 필요).
+  유일한 예외: forward 평가 **후** 다음 사이클 dev로 읽는 `scripts/run_next_cycle_grid.py`(항목 84·85) — 평가 결과 파일이 없으면 스스로 멈춘다.
 - daily test split(2023-07-01~2026-09-16)은 항목 41에서 이미 소진됨.
   test를 읽는 코드는 반드시 `src/eval/test_lock.confirm_final_test_use()`를 먼저 호출.
 - 잠금 환경변수(`STOCKLENS_CONFIRM_FINAL_TEST`, `STOCKLENS_CONFIRM_INTRADAY_FORWARD`,

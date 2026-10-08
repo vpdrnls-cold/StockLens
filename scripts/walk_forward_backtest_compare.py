@@ -117,14 +117,15 @@ def to_data_by_stock(dataset: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
-def universe_average_gross(data_by_stock: dict[str, pd.DataFrame]) -> pd.Series:
+def universe_average_gross(data_by_stock: dict[str, pd.DataFrame], holding: int = 5) -> pd.Series:
     """Equal-weight average gross return of every tradable stock, per decision date.
 
     Uses the same decision grid and price-eligibility rule as the engine's
-    partial-universe mode (T-5 close, T close, T+1 open, T+5 close all valid).
+    partial-universe mode (T-5 close, T close, T+1 open, T+holding close all valid).
+    ``holding`` must match the strategy's ``holding_days`` (item 84 compares 5/10/20).
     """
     universe = prepare_universe(data_by_stock, how="outer")
-    lookback = holding = 5
+    lookback = 5
     codes = list(data_by_stock)
     opens = {c: universe[f"open_{c}"].to_numpy(float) for c in codes}
     closes = {c: universe[f"close_{c}"].to_numpy(float) for c in codes}

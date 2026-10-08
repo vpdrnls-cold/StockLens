@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
+from xgboost.callback import TrainingCallback
 
 from src.features.engineering import SELECTED_FEATURES
 from src.ml.cross_section import daily_rank_ic, summarize_ic
@@ -103,6 +104,35 @@ def _make_ic_eval_metric(trade_dates: np.ndarray, min_stocks: int = 3):
     return ic_eval_metric
 
 
+class MinTreesEarlyStopping(TrainingCallback):
+    """Early stopping that never picks fewer than ``min_trees`` trees (CURRENT_STATUS item 84, M1).
+
+    XGBoost's built-in early stopping has no lower bound. Here the best round is
+    only tracked from tree ``min_trees`` on (smaller metric = better, the same
+    convention as ``_make_ic_eval_metric``), and training stops ``rounds`` rounds
+    after the last improvement. The best round is written to the booster's
+    ``best_iteration`` attribute, which ``XGBRegressor.predict`` honors.
+    """
+
+    def __init__(self, rounds: int, min_trees: int) -> None:
+        if rounds < 1 or min_trees < 1:
+            raise ValueError("rounds and min_trees must be >= 1.")
+        super().__init__()
+        self.rounds = rounds
+        self.min_trees = min_trees
+        self.best_round: int | None = None
+        self.best_score: float | None = None
+
+    def after_iteration(self, model, epoch: int, evals_log) -> bool:
+        data = list(evals_log)[-1]
+        metric = list(evals_log[data])[-1]
+        score = float(evals_log[data][metric][-1])
+        if epoch + 1 >= self.min_trees and (self.best_score is None or score < self.best_score):
+            self.best_round, self.best_score = epoch, score
+            model.set_attr(best_iteration=str(epoch), best_score=str(score))
+        return self.best_round is not None and epoch - self.best_round >= self.rounds
+
+
 def train_model(
     X_train: pd.DataFrame,
     y_train: pd.Series,
@@ -112,6 +142,7 @@ def train_model(
     feature_columns: tuple[str, ...] = SELECTED_FEATURES,
     params: dict | None = None,
     early_stopping_metric: str = "rmse",
+    min_trees: int | None = None,
 ) -> TrainedModel:
     """Train the daily XGBoost model with early stopping on validation.
 
@@ -130,6 +161,11 @@ def train_model(
         ``splits.validation``), not the feature-only output of
         ``src.feature_selection.data_loading.load_split``, which
         strips it.
+
+    ``min_trees`` (item 84, M1): ``None`` (default) keeps XGBoost's own early
+    stopping, exactly as before (the frozen model's fingerprint depends on it).
+    An integer uses ``MinTreesEarlyStopping`` instead: at least that many trees.
+    ``params["n_estimators"]`` must then be >= ``min_trees``.
     """
     _validate_columns(X_train, feature_columns, name="X_train")
     _validate_columns(X_val, feature_columns, name="X_val")
@@ -155,10 +191,17 @@ def train_model(
 
     resolved_params = {**DEFAULT_PARAMS, **(params or {})}
 
+    if min_trees is None:
+        stopping = {"early_stopping_rounds": EARLY_STOPPING_ROUNDS}
+    else:
+        if resolved_params["n_estimators"] < min_trees:
+            raise ValueError("n_estimators must be >= min_trees.")
+        stopping = {"callbacks": [MinTreesEarlyStopping(EARLY_STOPPING_ROUNDS, min_trees)]}
+
     model = XGBRegressor(
         **resolved_params,
         eval_metric=eval_metric,
-        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+        **stopping,
     )
 
     model.fit(
