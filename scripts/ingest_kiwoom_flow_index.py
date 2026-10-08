@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.api import KiwoomClient, KiwoomClientError
+from src.api import KiwoomClient, KiwoomClientError, KiwoomTokenError
 from src.data.ingest import ingest_kiwoom_index_daily, ingest_kiwoom_investor_flow_batch
 from src.data.normalization import HistoricalDataValidationError
 from src.data.storage import HistoricalStorageError
@@ -67,6 +67,9 @@ def main() -> int:
             result = ingest_kiwoom_index_daily(
                 client, index_code, args.base_date, stop_date=stop_date
             )
+        except KiwoomTokenError as error:
+            print(error.stop_line(), file=sys.stderr, flush=True)
+            return 1
         except (
             KiwoomClientError,
             HistoricalDataValidationError,
@@ -91,9 +94,13 @@ def main() -> int:
                 tail = f" / incomplete {list(result.incomplete_dates)}" if result.incomplete_dates else ""
                 print(f"{head} → {result.row_count} days{tail}", flush=True)
 
-        results = ingest_kiwoom_investor_flow_batch(
-            client, args.stock_codes, args.base_date, stop_date=stop_date, on_result=_progress
-        )
+        try:
+            results = ingest_kiwoom_investor_flow_batch(
+                client, args.stock_codes, args.base_date, stop_date=stop_date, on_result=_progress
+            )
+        except KiwoomTokenError as error:
+            print(error.stop_line(), file=sys.stderr, flush=True)
+            return 1
         failures += sum(not result.success for result in results)
         ok = sum(result.success for result in results)
         print(f"flow_summary={ok}/{len(results)} successful")

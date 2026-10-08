@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
-from src.api.kiwoom_client import KiwoomClient, KiwoomClientError
+from src.api.kiwoom_client import KiwoomClient, KiwoomClientError, KiwoomTokenError
 from src.data.normalization import (
     HistoricalDataValidationError,
     normalize_ka10059_response,
@@ -109,7 +109,10 @@ def ingest_kiwoom_daily_chart_batch(
     *,
     storage: HistoricalStorage | None = None,
 ) -> list[BatchIngestionItemResult]:
-    """Sequentially ingest daily charts and continue after a per-symbol failure."""
+    """Sequentially ingest daily charts and continue after a per-symbol failure.
+
+    ``KiwoomTokenError`` (token issuance failed) is re-raised: it is not per-symbol.
+    """
     historical_storage = storage or HistoricalStorage()
     results: list[BatchIngestionItemResult] = []
 
@@ -121,6 +124,8 @@ def ingest_kiwoom_daily_chart_batch(
                 base_date,
                 storage=historical_storage,
             )
+        except KiwoomTokenError:
+            raise  # no token -> every stock fails the same way; stop the batch
         except (
             KiwoomClientError,
             HistoricalDataValidationError,
@@ -187,6 +192,8 @@ def ingest_kiwoom_investor_flow_batch(
 ) -> list[DatedSeriesIngestionResult]:
     """Sequentially ingest ``ka10059`` flows; one stock's failure does not stop the rest.
 
+    ``KiwoomTokenError`` (token issuance failed) is re-raised: it is not per-stock.
+
     ``on_result(done, total, result)`` is called after each stock (progress
     output for long full-history runs); it does not change what is stored.
     """
@@ -205,6 +212,8 @@ def ingest_kiwoom_investor_flow_batch(
                 response, stock_code=stock_code, retrieved_at=retrieved_at
             )
             normalized_path = historical_storage.save_investor_flows(stock_code, days)
+        except KiwoomTokenError:
+            raise  # no token -> every stock fails the same way; stop the batch
         except (
             KiwoomClientError,
             HistoricalDataValidationError,

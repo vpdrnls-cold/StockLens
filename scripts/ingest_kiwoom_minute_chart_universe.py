@@ -38,7 +38,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.api import KiwoomClient, KiwoomClientError
+from src.api import KiwoomClient, KiwoomClientError, KiwoomTokenError
 from src.data.ingest import ingest_kiwoom_minute_chart_raw
 from src.data.storage import HistoricalStorageError
 from src.utils.config import ConfigurationError
@@ -184,6 +184,9 @@ def main() -> int:
                 args.stop_date,
                 tic_scope=args.tic_scope,
             )
+        except KiwoomTokenError as error:
+            print(f"{prefix} {error.stop_line()}", file=sys.stderr)
+            return 1
         except (KiwoomClientError, HistoricalStorageError, ValueError) as error:
             print(f"{prefix} 실패: {error}")
             failed.append(code)

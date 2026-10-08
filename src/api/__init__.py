@@ -5,6 +5,7 @@ from src.api.kiwoom_client import (
     KiwoomAPIError,
     KiwoomClient,
     KiwoomClientError,
+    KiwoomTokenError,
     KiwoomTransportError,
     StockQuote,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "KiwoomAPIError",
     "KiwoomClient",
     "KiwoomClientError",
+    "KiwoomTokenError",
     "KiwoomTransportError",
     "StockQuote",
 ]

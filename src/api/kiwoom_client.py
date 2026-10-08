@@ -44,6 +44,24 @@ class KiwoomAPIError(KiwoomClientError):
         self.return_code = return_code
 
 
+class KiwoomTokenError(KiwoomAPIError):
+    """Raised when ``au10001`` token issuance fails.
+
+    Every request needs a token, so this is never a per-stock failure (e.g.
+    ``8050`` IP not registered, a rejected key, or the token endpoint still
+    rate-limited after retries). Batch loops re-raise it instead of moving
+    on to the next stock, which would re-issue the token for every stock
+    and hit the token rate limit (2026-10-08 log).
+    """
+
+    def stop_line(self) -> str:
+        """One log line for a batch step stopped by this error (no credentials)."""
+        hint = ""
+        if "8050" in str(self):
+            hint = " — 지금 네트워크의 IP가 키움 API 사용신청에 등록돼 있지 않음"
+        return f"토큰 발급 실패로 이 단계 중단(모든 종목이 같은 이유로 실패){hint}: {self}"
+
+
 @dataclass(frozen=True)
 class AccessToken:
     """An in-memory access token returned by ``au10001``."""
@@ -125,22 +143,27 @@ class KiwoomClient:
             "appkey": self._settings.app_key,
             "secretkey": self._settings.secret_key,
         }
-        response, _headers = self._post(
-            self._TOKEN_PATH,
-            payload,
-            headers=self._json_headers(),
-            stage="token_issuance",
-        )
+        try:
+            response, _headers = self._post(
+                self._TOKEN_PATH,
+                payload,
+                headers=self._json_headers(),
+                stage="token_issuance",
+            )
+        except KiwoomAPIError as error:
+            raise KiwoomTokenError(
+                str(error), status_code=error.status_code, return_code=error.return_code
+            ) from error
         token = str(response.get("token", "")).strip()
         expires_dt = str(response.get("expires_dt", "")).strip()
         token_type = str(response.get("token_type", "bearer")).strip() or "bearer"
         if not token or not expires_dt:
-            raise KiwoomAPIError("Token response is missing token or expires_dt.")
+            raise KiwoomTokenError("Token response is missing token or expires_dt.")
 
         try:
             expires_at = datetime.strptime(expires_dt, "%Y%m%d%H%M%S")
         except ValueError as error:
-            raise KiwoomAPIError("Token response has an invalid expires_dt value.") from error
+            raise KiwoomTokenError("Token response has an invalid expires_dt value.") from error
 
         self._access_token = AccessToken(token, expires_at, token_type)
         return self._access_token

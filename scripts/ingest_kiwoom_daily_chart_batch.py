@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.api import KiwoomClient
+from src.api import KiwoomClient, KiwoomTokenError
 from src.data.ingest import ingest_kiwoom_daily_chart_batch
 from src.data.universe import get_universe
 from src.utils.config import ConfigurationError
@@ -45,11 +45,15 @@ def main() -> int:
         print(f"Batch ingestion setup failed: {error}", file=sys.stderr)
         return 1
 
-    results = ingest_kiwoom_daily_chart_batch(
-        client,
-        arguments.stock_codes,
-        arguments.base_date,
-    )
+    try:
+        results = ingest_kiwoom_daily_chart_batch(
+            client,
+            arguments.stock_codes,
+            arguments.base_date,
+        )
+    except KiwoomTokenError as error:
+        print(error.stop_line(), file=sys.stderr)
+        return 1
     for result in results:
         if result.success:
             assert result.ingestion is not None
