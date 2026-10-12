@@ -8,7 +8,7 @@ from src.analysts import notices
 from src.recommendation import survey
 
 ROOT = Path(__file__).resolve().parents[1]
-SCREENS = ("app/viewer.py", "src/ui/viewer_data.py", "scripts/recommend.py", "scripts/survey.py",
+SCREENS = ("app/viewer.py", "app/panel.py", "app/survey_page.py", "src/ui/survey_form.py", "src/ui/viewer_data.py", "scripts/recommend.py", "scripts/survey.py",
            "src/recommendation/survey.py", "src/analysts/quant.py")
 
 

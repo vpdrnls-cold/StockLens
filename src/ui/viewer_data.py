@@ -18,6 +18,7 @@ from typing import Any
 
 from src.analysts.chart import SPEC_BY_KEY, render_text
 from src.analysts.notices import RANK_LABEL, REFERENCE_RANK_NOTICE
+from src.analysts.profile_ranking import FILE_NAME as PROFILE_RANKS_FILE
 
 CARDS_ROOT = Path("reports/analyst_cards")
 PROFILE_PATH = Path("data/user_profile.json")
@@ -251,6 +252,40 @@ def load_market(day: str, root: Path = CARDS_ROOT) -> dict[str, Any] | None:
     """The page-level market card of one decision date (reports/analyst_cards/<T>/market.json)."""
     path = Path(root) / day / "market.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+PROFILE_RANK_LABEL = "성향 반영 순위"  # item 92; never "추천" (item 77)
+
+
+def decision_basis(day: str) -> str:
+    """Label for every card-based box, so it is not mistaken for the live values (item 93)."""
+    return f"판단일 {day[:4]}-{day[4:6]}-{day[6:]} 종가 기준 · 실시간 아님"
+
+
+def load_profile_ranks(day: str, root: Path = CARDS_ROOT) -> dict[str, Any] | None:
+    """profile_ranks.json of one decision date (item 92), or None for days before it existed."""
+    path = Path(root) / day / PROFILE_RANKS_FILE
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def profile_rank_rows(card: dict[str, Any] | None, profile: str | None, n: int | None = 10) -> list[dict[str, Any]] | None:
+    """Top rows of one profile's stored order, or None when the profile is neutral (= model
+    ranking) or the file / profile is missing. Values are the file's own (not re-ranked)."""
+    if not card or not profile or profile == "neutral" or profile not in card["profiles"]:
+        return None
+    ranks = card["profiles"][profile]["ranks"]
+    return ranks if n is None else ranks[:n]
+
+
+def profile_stock_row(card: dict[str, Any] | None, profile: str | None, code: str) -> dict[str, Any] | None:
+    rows = profile_rank_rows(card, profile, n=None)
+    return next((r for r in rows if r["stock_code"] == code), None) if rows else None
+
+
+def profile_terms_text(row: dict[str, Any]) -> str:
+    """Same wording as recommend.py --profile: the z-scale terms that add up to the profile score."""
+    return (f"모델 순위 점수 {row['contribution_model']:+.2f}, 변동성 조정 {row['contribution_risk']:+.2f}, "
+            f"거래량 {row['contribution_volume']:+.2f} → 최종 {row['personalized_score']:+.2f} (그날 종목 간 표준화 값)")
 
 
 def _pct(x: float | None, digits: int = 1) -> str:

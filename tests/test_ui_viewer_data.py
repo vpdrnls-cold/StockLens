@@ -9,6 +9,7 @@ from src.analysts import quant
 from src.ui import viewer_data as vd
 
 ROOT = Path(__file__).resolve().parents[1]
+APP_PAGES = sorted((ROOT / "app").glob("*.py"))  # router + every page (item 91)
 
 
 def _quant(code: str, rank: int, held: bool | None, status: str | None = None, tie: int = 1) -> dict:
@@ -205,7 +206,7 @@ def test_viewer_never_reads_prices_or_returns() -> None:
     # Item 70 condition 2: the paper log's realized returns since 2026-09-24 are forward holdout.
     forbidden = ("HistoricalStorage", "data/processed/historical", "close_price", "open_price",
                  "target_return", "ka10080", "ka10081", "daily_picks", "calculate_performance", "backtest")
-    for path in (ROOT / "src" / "ui" / "viewer_data.py", ROOT / "app" / "viewer.py"):
+    for path in (ROOT / "src" / "ui" / "viewer_data.py", ROOT / "src" / "ui" / "survey_form.py", *APP_PAGES):
         code = path.read_text(encoding="utf-8")
         hits = [w for w in forbidden if w in code]
         assert not hits, f"{path.name} references {hits}"
@@ -236,6 +237,54 @@ def test_viewer_has_no_bare_conditional_expressions() -> None:
     # `a() if x else b()` on its own line showed `None` on the page. Use if/else blocks.
     import ast
 
-    tree = ast.parse((ROOT / "app" / "viewer.py").read_text(encoding="utf-8"))
-    bare = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.IfExp)]
-    assert not bare, f"bare conditional expressions at lines {bare}"
+    for path in APP_PAGES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        bare = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.IfExp)]
+        assert not bare, f"{path.name}: bare conditional expressions at lines {bare}"
+
+
+def test_app_page_list_covers_the_router() -> None:
+    # Item 91: the guards above scan app/*.py; every routed page must be one of those files.
+    import re
+
+    router = (ROOT / "app" / "viewer.py").read_text(encoding="utf-8")
+    routed = set(re.findall(r'st\.Page\("([^"]+)"', router))
+    assert routed and routed == {p.name for p in APP_PAGES} - {"viewer.py"}
+
+
+def _profile_ranks_file(root: Path) -> dict:
+    from src.analysts import profile_ranking as pr
+
+    def rows(order):
+        return [{"stock_code": c, "name": f"종목{c}", "rank": i, "model_rank": m, "personalized_score": 0.5 - i / 10,
+                 "contribution_model": 0.5 - i / 10, "contribution_risk": 0.0, "contribution_momentum": 0.0,
+                 "contribution_volume": 0.0} for i, (c, m) in enumerate(order, 1)]
+
+    card = pr.build_profile_ranks(decision_date=date(2026, 10, 6), fingerprint_match=True, profiles={
+        "conservative": (0.4, rows([("000003", 3), ("000001", 1), ("000002", 2)])),
+        "aggressive": (0.6, rows([("000002", 2), ("000001", 1), ("000003", 3)])),
+    })
+    pr.write_profile_ranks(card, root)
+    return card
+
+
+def test_profile_ranks_are_read_as_stored(tmp_path) -> None:
+    # Item 92: the viewer shows the stored order; neutral = model ranking (no profile table).
+    assert vd.load_profile_ranks("20261006", tmp_path) is None
+    assert vd.profile_rank_rows(None, "conservative") is None
+    _write_day(tmp_path, [_quant("000001", 1, True, "신규")])
+    _profile_ranks_file(tmp_path)
+    assert set(vd.load_day("20261006", tmp_path)) == {"000001"}  # the ranks file is not a stock card
+    card = vd.load_profile_ranks("20261006", tmp_path)
+    assert vd.profile_rank_rows(card, "neutral") is None
+    assert [r["stock_code"] for r in vd.profile_rank_rows(card, "conservative")] == ["000003", "000001", "000002"]
+    assert [r["rank"] for r in vd.profile_rank_rows(card, "aggressive", n=2)] == [1, 2]
+    row = vd.profile_stock_row(card, "conservative", "000001")
+    assert row["rank"] == 2 and row["model_rank"] == 1
+    assert vd.profile_stock_row(card, "neutral", "000001") is None
+    assert "최종 +0.30" in vd.profile_terms_text(row)
+
+
+def test_decision_basis_label() -> None:
+    # Item 93 follow-up: card boxes say they are the decision date's close, not live values.
+    assert vd.decision_basis("20261008") == "판단일 2026-10-08 종가 기준 · 실시간 아님"

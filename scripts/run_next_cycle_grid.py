@@ -69,6 +69,7 @@ from src.backtest.point_in_time import (
     zero_value_sensitivity,
 )
 from src.backtest.daily_equity import daily_max_drawdown
+from src.data.intraday_split import FORWARD2_START
 from src.data.storage import HistoricalStorage
 from src.data.universe import get_universe
 from src.eval import next_cycle as nc
@@ -98,6 +99,9 @@ def gate(out: Path, dev_end: str, stock_codes, top50, forward_results: Path = FO
         return 2, f"STOP: --dev-end must be after the dev start {nc.DEV_START}."
     if end > date.today():
         return 2, "STOP: --dev-end is in the future."
+    if end >= date.fromisoformat(FORWARD2_START):
+        return 2, (f"STOP: --dev-end {dev_end} reaches forward2 ({FORWARD2_START}~), the next cycle's final "
+                   "check (item 94). Nothing was read.")
     if not forward_results.exists():
         return 6, (f"STOP: item 84 runs after the one forward evaluation ({forward_results} missing); "
                    "the forward period stays closed until then. Nothing was read.")

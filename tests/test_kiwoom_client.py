@@ -823,3 +823,20 @@ def test_investor_flow_page_rejects_malformed_date() -> None:
 
     with pytest.raises(ValueError, match="date"):
         client.get_investor_flow_page("005930", "2026-09-30")
+
+
+def test_index_quote_requests_ka20001_and_returns_raw() -> None:
+    # Item 93: documented request fields only; the unit of cur_prc is decided in src/ui/live_data.py.
+    session = FakeSession([
+        FakeResponse({"token": "access-token", "token_type": "bearer", "expires_dt": "20991231235959", "return_code": 0}),
+        FakeResponse({"cur_prc": "-2394.49", "pred_pre": "-278.47", "flu_rt": "-10.42", "return_code": 0}),
+    ])
+    client = KiwoomClient(_settings(), session=session)  # type: ignore[arg-type]
+
+    raw = client.get_index_quote("201")
+
+    assert raw["cur_prc"] == "-2394.49"
+    call = session.calls[1]
+    assert call["url"].endswith("/api/dostk/sect")
+    assert call["headers"]["api-id"] == "ka20001"
+    assert call["json"] == {"mrkt_tp": "0", "inds_cd": "201"}

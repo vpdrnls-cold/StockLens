@@ -24,9 +24,9 @@ _MINUTE_READ = re.compile(r"build_panel\(|load_minute\(|data/raw/kiwoom/ka10080"
 MINUTE_DATA_SCRIPTS = {
     "intraday_ic_diagnostic.py": "panel capped before FORWARD_START (cap_before_forward)",
     "experiment_intraday_overlay_dev.py": "dev / semi_holdout only, through select_segment",
-    "evaluate_forward_holdout.py": "the one forward evaluation (item 54)",
+    "evaluate_forward_holdout.py": "the one forward evaluation (item 54); stops if data reaches forward2 (item 94)",
     "rehearse_january_runs.py": "panel and dataset cut before FORWARD_START (before_forward), dev segment only (item 88)",
-    "check_forward_minute_coverage.py": "bar counts only (ok / incomplete / missing), no prices or labels",
+    "check_forward_minute_coverage.py": "bar counts only (ok / incomplete / missing), no prices or labels -- forward2 dates too",
     "check_intraday_raw.py": "data-quality checks only (coverage, reconcile, bar times), no labels",
     "ingest_kiwoom_minute_chart.py": "writer (API -> raw files)",
     "ingest_kiwoom_minute_chart_universe.py": "writer (API -> raw files)",

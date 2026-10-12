@@ -1,0 +1,448 @@
+diff --git a/CURRENT_STATUS.md b/CURRENT_STATUS.md
+index bfee753..462d364 100644
+--- a/CURRENT_STATUS.md
++++ b/CURRENT_STATUS.md
+@@ -980,6 +980,10 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과
+   - **판정 규칙 (수정, 결과 보기 전 고정)**: 두 날·세 API·전 필드에서 20:30 값 = 다음 날 값이면 "20:30에 확정 관측" → `SESSION_FINAL_TIME_KST = 20:30`(원래 규칙 1의 "변경 없는 첫 스냅샷 시각, 30분 단위"와 같은 값). 하나라도 다르면 원래 규칙 2 그대로(값을 바꾸지 않고 멈춰서 재훈과 결정: 야간 수집 시각 이동 / 다음 날 값 기준 판단).
+   - **잃는 정보**: 18:00~20:30 사이 언제 확정되는지는 모름. 확정값을 쓰는 곳(지수·수급 완성 판정, 야간 `recommend.py`)은 모두 20:37 이후 실행이라 운용 영향 없음. 대가는 같은 날 18:00~20:30에 `recommend.py`·`chart_card.py`를 수동 실행하면 막히는 것뿐(보수적 방향).
+   - 일봉(ka10081)의 NXT(20시까지) 포함 여부는 20:30 값과 다음 날 값이 같은지로만 간접 확인됨(규칙 3).
++- **측정 계획 2차 수정 (2026-10-08, 측정 결과(`compare`)를 보기 전)**: 10/7 밤 맥이 잠들어 10/7 20:30 cron 스냅샷과 야간 수집이 모두 없음(`session_final_probe/20261007/`·`nightly_ingest_20261007.log` 없음) → 2일차 20:30 값은 다시 받을 수 없음.
++  1. **2일차를 10/7 → 10/8(목)로 교체**: 10/8 20:30 cron 스냅샷 + 다음 날(10/9, 한글날 휴장이지만 API 조회 가능) `snapshot --date 20261008`. 판정 규칙(두 날·세 API·전 필드에서 20:30 값 = 다음 날 값이면 20:30, 하나라도 다르면 규칙 2로 멈춤)은 그대로.
++  2. **1일차 다음 날 스냅샷 시점 이탈 기록**: 10/6의 "다음 날" 스냅샷은 10/7이 아니라 10/8 10:33에 찍힘(`20261006/103311.json`). 확정 후 더 지난 시점이라 "20:30 이후에도 바뀌는가"를 보는 방향으로는 보수적(늦게 바뀐 값도 잡음) — 그대로 사용.
++  3. `compare`는 두 날 스냅샷이 모두 생긴 뒤 한 번에 실행. 10/6을 먼저 보지 않음. 10/9(휴장) 20:30 cron이 만드는 `20261009/`(0행)는 판정에 쓰지 않음. 판정 후 cron 측정 줄 삭제.
+ - **테스트**: `tests/test_check_session_final_time.py` 2개(날짜 행 선택, 순서 섞인 스냅샷에서 마지막 변경 시각·필드).
+ - **결과**: (측정 후 기록)
+ 
+@@ -1566,3 +1570,14 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과
+ - **forward 잠금 규칙과의 관계**: forward 구간은 평가(1회) 전까지 `evaluate_forward_holdout.py`만 읽음 — 그대로. 평가 후 forward는 다음 사이클 dev가 되고(항목 78), 그때 읽는 경로는 이 스크립트뿐(CLAUDE.md 3절에 한 줄 추가).
+ - **테스트**: `tests/test_next_cycle_grid.py` **17개** — 고정값, forward2 검정력(항목 79 수치 39%·61% 재현)·기간 규칙(0.155→500, 0.10→250, 0.20→없음), 선택 규칙(아무도 통과 못 하면 기준선·4승+평균>0·평균≤0 탈락·기준선 음수여도 0 문턱 유지·동점 순서·누락 오류), M1 구간 경계·purge·**end 이후 값 바꿔도 불변**, 트리 하한(일반 조기종료 <99 vs 하한 ≥99, 예측이 선택된 트리만 사용), 보유기간별 동일가중, 후보별 엔진 실행, 진단 방향, 관문 8가지. 전체 442 + 17 = **459개 통과**(core5·top50 둘 다).
+ - **1월 실행 명령 (forward 평가 직후, 재훈 확인 후)**: `STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_FINAL_TEST=1 PYTHONPATH=. .venv/bin/python scripts/run_next_cycle_grid.py --dev-end <forward 평가일>`
++
++86. **키움 토큰 발급 실패 시 배치 단계 즉시 중단 (2026-10-08) — 모델·데이터·운용·판정 변경 없음 (엔지니어링, 실험 아님)**
++
++- **배경 (로그 `nightly_ingest_20261008.log`, 10:27 수동 실행)**: 등록되지 않은 IP의 네트워크에서 실행 → 토큰 발급(au10001)이 `8050: IP가 등록되지 않았습니다`로 실패. 토큰이 캐시되지 않으니 수급 단계가 종목마다 토큰을 다시 요청 → 12종목 뒤 토큰 엔드포인트가 유량 초과(`1700`) → 종목당 재시도 백오프(2+4+8+16+32초)에 들어간 상태에서 재훈이 중단(KeyboardInterrupt). 두 번째 실행(10:28, 등록된 네트워크)은 수급 200/200 성공. (2026-10-08 대화에서 "유량 초과로 traceback이 나며 죽었다"고 했던 것은 정정 — 직접 원인은 수동 중단이고, 그대로 뒀다면 200종목 × 최대 약 1분 백오프가 이어졌을 것.)
++- **원칙**: 토큰이 없으면 모든 요청이 같은 이유로 실패하므로 종목 단위 실패가 아니다 → 그 단계만 즉시 끝내고 한 줄 남김. 다른 단계(DART·ECOS·뉴스)는 야간 스크립트가 그대로 계속 진행(기존 `|| status=1`).
++- **변경**
++  - `src/api/kiwoom_client.py`: `KiwoomTokenError(KiwoomAPIError)` 추가. `authenticate()`의 토큰 요청에서 나는 API 오류(8050, 키 거부, 재시도 후에도 남은 유량 초과)와 토큰 응답 형식 오류를 이 예외로 올림. `KiwoomAPIError` 하위 클래스라 기존 `except` 절은 그대로 잡힘. `stop_line()`: 중단 한 줄(8050이면 IP 미등록 안내, 키·토큰 값 없음).
++  - `src/data/ingest.py`: `ingest_kiwoom_daily_chart_batch`·`ingest_kiwoom_investor_flow_batch`가 `KiwoomTokenError`만 다시 올림(종목별 오류는 기존대로 다음 종목 진행).
++  - `scripts/ingest_kiwoom_daily_chart_batch.py`·`ingest_kiwoom_flow_index.py`(지수 루프·수급 배치)·`ingest_kiwoom_minute_chart_universe.py`: `KiwoomTokenError`면 `stop_line()`을 stderr에 한 번 쓰고 종료 코드 1.
++- **한계**: 토큰이 이미 발급된 뒤 실행 중 IP가 바뀌어 데이터 요청에서 8050이 나는 경우는 여전히 종목별 실패로 처리(요청 단계 오류 메시지 해석은 하지 않음). 네트워크 자체 오류(`KiwoomTransportError`)도 그대로 종목별.
++- **테스트**: `tests/test_kiwoom_token_failure.py` **8개** — 8050 → `KiwoomTokenError`·재시도 없음·한 줄에 키 없음 / 토큰 유량 초과 재시도 소진 → `KiwoomTokenError` / 토큰 발급 후 데이터 요청 오류는 `KiwoomTokenError` 아님 / 수급 배치: 토큰 오류는 1회 호출 후 중단, 종목별 오류는 3종목 모두 진행 / 일봉 배치 중단 / 야간 스크립트 3개: 종료 코드 1·요청 1회·중단 줄 1번. 수정 전 코드에서 5개 실패 확인. Claude VM(Python 3.13, pandas 3.0.5)에서 전체 459 + 8 = **467개 통과**. 재훈 기기 확인 필요.
+diff --git a/scripts/ingest_kiwoom_daily_chart_batch.py b/scripts/ingest_kiwoom_daily_chart_batch.py
+index ef4265a..fc0dff2 100644
+--- a/scripts/ingest_kiwoom_daily_chart_batch.py
++++ b/scripts/ingest_kiwoom_daily_chart_batch.py
+@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ if str(PROJECT_ROOT) not in sys.path:
+     sys.path.insert(0, str(PROJECT_ROOT))
+ 
+-from src.api import KiwoomClient
++from src.api import KiwoomClient, KiwoomTokenError
+ from src.data.ingest import ingest_kiwoom_daily_chart_batch
+ from src.data.universe import get_universe
+ from src.utils.config import ConfigurationError
+@@ -45,11 +45,15 @@ def main() -> int:
+         print(f"Batch ingestion setup failed: {error}", file=sys.stderr)
+         return 1
+ 
+-    results = ingest_kiwoom_daily_chart_batch(
+-        client,
+-        arguments.stock_codes,
+-        arguments.base_date,
+-    )
++    try:
++        results = ingest_kiwoom_daily_chart_batch(
++            client,
++            arguments.stock_codes,
++            arguments.base_date,
++        )
++    except KiwoomTokenError as error:
++        print(error.stop_line(), file=sys.stderr)
++        return 1
+     for result in results:
+         if result.success:
+             assert result.ingestion is not None
+diff --git a/scripts/ingest_kiwoom_flow_index.py b/scripts/ingest_kiwoom_flow_index.py
+index 45582e5..4ce5fcb 100644
+--- a/scripts/ingest_kiwoom_flow_index.py
++++ b/scripts/ingest_kiwoom_flow_index.py
+@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ if str(PROJECT_ROOT) not in sys.path:
+     sys.path.insert(0, str(PROJECT_ROOT))
+ 
+-from src.api import KiwoomClient, KiwoomClientError
++from src.api import KiwoomClient, KiwoomClientError, KiwoomTokenError
+ from src.data.ingest import ingest_kiwoom_index_daily, ingest_kiwoom_investor_flow_batch
+ from src.data.normalization import HistoricalDataValidationError
+ from src.data.storage import HistoricalStorageError
+@@ -67,6 +67,9 @@ def main() -> int:
+             result = ingest_kiwoom_index_daily(
+                 client, index_code, args.base_date, stop_date=stop_date
+             )
++        except KiwoomTokenError as error:
++            print(error.stop_line(), file=sys.stderr, flush=True)
++            return 1
+         except (
+             KiwoomClientError,
+             HistoricalDataValidationError,
+@@ -91,9 +94,13 @@ def main() -> int:
+                 tail = f" / incomplete {list(result.incomplete_dates)}" if result.incomplete_dates else ""
+                 print(f"{head} → {result.row_count} days{tail}", flush=True)
+ 
+-        results = ingest_kiwoom_investor_flow_batch(
+-            client, args.stock_codes, args.base_date, stop_date=stop_date, on_result=_progress
+-        )
++        try:
++            results = ingest_kiwoom_investor_flow_batch(
++                client, args.stock_codes, args.base_date, stop_date=stop_date, on_result=_progress
++            )
++        except KiwoomTokenError as error:
++            print(error.stop_line(), file=sys.stderr, flush=True)
++            return 1
+         failures += sum(not result.success for result in results)
+         ok = sum(result.success for result in results)
+         print(f"flow_summary={ok}/{len(results)} successful")
+diff --git a/scripts/ingest_kiwoom_minute_chart_universe.py b/scripts/ingest_kiwoom_minute_chart_universe.py
+index bf16b3c..67ff6a6 100644
+--- a/scripts/ingest_kiwoom_minute_chart_universe.py
++++ b/scripts/ingest_kiwoom_minute_chart_universe.py
+@@ -38,7 +38,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ if str(PROJECT_ROOT) not in sys.path:
+     sys.path.insert(0, str(PROJECT_ROOT))
+ 
+-from src.api import KiwoomClient, KiwoomClientError
++from src.api import KiwoomClient, KiwoomClientError, KiwoomTokenError
+ from src.data.ingest import ingest_kiwoom_minute_chart_raw
+ from src.data.storage import HistoricalStorageError
+ from src.utils.config import ConfigurationError
+@@ -184,6 +184,9 @@ def main() -> int:
+                 args.stop_date,
+                 tic_scope=args.tic_scope,
+             )
++        except KiwoomTokenError as error:
++            print(f"{prefix} {error.stop_line()}", file=sys.stderr)
++            return 1
+         except (KiwoomClientError, HistoricalStorageError, ValueError) as error:
+             print(f"{prefix} 실패: {error}")
+             failed.append(code)
+diff --git a/src/api/__init__.py b/src/api/__init__.py
+index 2344b86..287d0cd 100644
+--- a/src/api/__init__.py
++++ b/src/api/__init__.py
+@@ -5,6 +5,7 @@ from src.api.kiwoom_client import (
+     KiwoomAPIError,
+     KiwoomClient,
+     KiwoomClientError,
++    KiwoomTokenError,
+     KiwoomTransportError,
+     StockQuote,
+ )
+@@ -14,6 +15,7 @@ __all__ = [
+     "KiwoomAPIError",
+     "KiwoomClient",
+     "KiwoomClientError",
++    "KiwoomTokenError",
+     "KiwoomTransportError",
+     "StockQuote",
+ ]
+diff --git a/src/api/kiwoom_client.py b/src/api/kiwoom_client.py
+index 7b2f9f9..acbe057 100644
+--- a/src/api/kiwoom_client.py
++++ b/src/api/kiwoom_client.py
+@@ -44,6 +44,24 @@ class KiwoomAPIError(KiwoomClientError):
+         self.return_code = return_code
+ 
+ 
++class KiwoomTokenError(KiwoomAPIError):
++    """Raised when ``au10001`` token issuance fails.
++
++    Every request needs a token, so this is never a per-stock failure (e.g.
++    ``8050`` IP not registered, a rejected key, or the token endpoint still
++    rate-limited after retries). Batch loops re-raise it instead of moving
++    on to the next stock, which would re-issue the token for every stock
++    and hit the token rate limit (2026-10-08 log).
++    """
++
++    def stop_line(self) -> str:
++        """One log line for a batch step stopped by this error (no credentials)."""
++        hint = ""
++        if "8050" in str(self):
++            hint = " — 지금 네트워크의 IP가 키움 API 사용신청에 등록돼 있지 않음"
++        return f"토큰 발급 실패로 이 단계 중단(모든 종목이 같은 이유로 실패){hint}: {self}"
++
++
+ @dataclass(frozen=True)
+ class AccessToken:
+     """An in-memory access token returned by ``au10001``."""
+@@ -125,22 +143,27 @@ class KiwoomClient:
+             "appkey": self._settings.app_key,
+             "secretkey": self._settings.secret_key,
+         }
+-        response, _headers = self._post(
+-            self._TOKEN_PATH,
+-            payload,
+-            headers=self._json_headers(),
+-            stage="token_issuance",
+-        )
++        try:
++            response, _headers = self._post(
++                self._TOKEN_PATH,
++                payload,
++                headers=self._json_headers(),
++                stage="token_issuance",
++            )
++        except KiwoomAPIError as error:
++            raise KiwoomTokenError(
++                str(error), status_code=error.status_code, return_code=error.return_code
++            ) from error
+         token = str(response.get("token", "")).strip()
+         expires_dt = str(response.get("expires_dt", "")).strip()
+         token_type = str(response.get("token_type", "bearer")).strip() or "bearer"
+         if not token or not expires_dt:
+-            raise KiwoomAPIError("Token response is missing token or expires_dt.")
++            raise KiwoomTokenError("Token response is missing token or expires_dt.")
+ 
+         try:
+             expires_at = datetime.strptime(expires_dt, "%Y%m%d%H%M%S")
+         except ValueError as error:
+-            raise KiwoomAPIError("Token response has an invalid expires_dt value.") from error
++            raise KiwoomTokenError("Token response has an invalid expires_dt value.") from error
+ 
+         self._access_token = AccessToken(token, expires_at, token_type)
+         return self._access_token
+diff --git a/src/data/ingest.py b/src/data/ingest.py
+index 27e4aad..0788384 100644
+--- a/src/data/ingest.py
++++ b/src/data/ingest.py
+@@ -7,7 +7,7 @@ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Callable, Sequence
+ 
+-from src.api.kiwoom_client import KiwoomClient, KiwoomClientError
++from src.api.kiwoom_client import KiwoomClient, KiwoomClientError, KiwoomTokenError
+ from src.data.normalization import (
+     HistoricalDataValidationError,
+     normalize_ka10059_response,
+@@ -109,7 +109,10 @@ def ingest_kiwoom_daily_chart_batch(
+     *,
+     storage: HistoricalStorage | None = None,
+ ) -> list[BatchIngestionItemResult]:
+-    """Sequentially ingest daily charts and continue after a per-symbol failure."""
++    """Sequentially ingest daily charts and continue after a per-symbol failure.
++
++    ``KiwoomTokenError`` (token issuance failed) is re-raised: it is not per-symbol.
++    """
+     historical_storage = storage or HistoricalStorage()
+     results: list[BatchIngestionItemResult] = []
+ 
+@@ -121,6 +124,8 @@ def ingest_kiwoom_daily_chart_batch(
+                 base_date,
+                 storage=historical_storage,
+             )
++        except KiwoomTokenError:
++            raise  # no token -> every stock fails the same way; stop the batch
+         except (
+             KiwoomClientError,
+             HistoricalDataValidationError,
+@@ -187,6 +192,8 @@ def ingest_kiwoom_investor_flow_batch(
+ ) -> list[DatedSeriesIngestionResult]:
+     """Sequentially ingest ``ka10059`` flows; one stock's failure does not stop the rest.
+ 
++    ``KiwoomTokenError`` (token issuance failed) is re-raised: it is not per-stock.
++
+     ``on_result(done, total, result)`` is called after each stock (progress
+     output for long full-history runs); it does not change what is stored.
+     """
+@@ -205,6 +212,8 @@ def ingest_kiwoom_investor_flow_batch(
+                 response, stock_code=stock_code, retrieved_at=retrieved_at
+             )
+             normalized_path = historical_storage.save_investor_flows(stock_code, days)
++        except KiwoomTokenError:
++            raise  # no token -> every stock fails the same way; stop the batch
+         except (
+             KiwoomClientError,
+             HistoricalDataValidationError,
+diff --git a/tests/test_kiwoom_token_failure.py b/tests/test_kiwoom_token_failure.py
+new file mode 100644
+index 0000000..87c93a2
+--- /dev/null
++++ b/tests/test_kiwoom_token_failure.py
+@@ -0,0 +1,178 @@
++"""Token-issuance failure stops a batch step instead of retrying stock by stock.
++
++2026-10-08 log: on a network whose IP was not registered (8050), every stock
++re-issued the token, failed, and after 12 stocks the token endpoint was rate
++limited (1700). These tests pin the fix: ``KiwoomTokenError`` is raised by
++``authenticate()`` and re-raised by the batch loops and nightly scripts.
++"""
++
++from __future__ import annotations
++
++import sys
++from typing import Any
++
++import pytest
++
++import src.api.kiwoom_client as kiwoom_client_module
++from scripts import ingest_kiwoom_daily_chart_batch as daily_script
++from scripts import ingest_kiwoom_flow_index as flow_script
++from scripts import ingest_kiwoom_minute_chart_universe as minute_script
++from src.api.kiwoom_client import (
++    KiwoomAPIError,
++    KiwoomClient,
++    KiwoomTokenError,
++)
++from src.data.ingest import (
++    ingest_kiwoom_daily_chart_batch,
++    ingest_kiwoom_investor_flow_batch,
++)
++from src.utils.config import KiwoomSettings
++
++IP_MSG = (
++    "인증에 실패했습니다[8050:IP가 등록되지 않았습니다. "
++    "키움 REST API 홈페이지 > API 사용신청 화면에서 IP를 등록해주세요.]"
++)
++
++
++class FakeResponse:
++    def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
++        self._payload = payload
++        self.status_code = status_code
++        self.ok = 200 <= status_code < 400
++        self.headers: dict[str, str] = {}
++
++    def json(self) -> dict[str, Any]:
++        return self._payload
++
++
++class FakeSession:
++    def __init__(self, responses: list[FakeResponse]) -> None:
++        self.responses = responses
++        self.calls: list[str] = []
++
++    def post(self, url: str, **kwargs: Any) -> FakeResponse:
++        self.calls.append(url)
++        return self.responses.pop(0)
++
++
++def _client(responses: list[FakeResponse]) -> tuple[KiwoomClient, FakeSession]:
++    session = FakeSession(responses)
++    settings = KiwoomSettings(app_key="app-key-SECRET", secret_key="secret-key-SECRET")
++    return KiwoomClient(settings, session=session), session  # type: ignore[arg-type]
++
++
++def test_ip_not_registered_raises_token_error_without_retry() -> None:
++    client, session = _client([FakeResponse({"return_code": 3, "return_msg": IP_MSG})])
++
++    with pytest.raises(KiwoomTokenError) as caught:
++        client.authenticate()
++
++    assert isinstance(caught.value, KiwoomAPIError)  # existing except clauses still match
++    assert caught.value.return_code == 3
++    assert len(session.calls) == 1  # not a rate limit -> no retry
++    line = caught.value.stop_line()
++    assert "IP" in line and "8050" in line
++    assert "SECRET" not in line
++
++
++def test_token_rate_limit_after_retries_is_token_error(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setattr(kiwoom_client_module.time, "sleep", lambda seconds: None)
++    responses = [
++        FakeResponse({"return_code": 5, "return_msg": "허용된 요청 개수를 초과하였습니다"}, 429)
++        for _ in range(KiwoomClient._RATE_LIMIT_MAX_RETRIES + 1)
++    ]
++    client, session = _client(responses)
++
++    with pytest.raises(KiwoomTokenError) as caught:
++        client.authenticate()
++
++    assert caught.value.status_code == 429
++    assert "IP" not in caught.value.stop_line().split(":")[0]  # no 8050 hint
++    assert len(session.calls) == KiwoomClient._RATE_LIMIT_MAX_RETRIES + 1
++
++
++def test_data_request_error_after_valid_token_is_not_token_error() -> None:
++    token = FakeResponse(
++        {"token": "t", "token_type": "bearer", "expires_dt": "20991231235959", "return_code": 0}
++    )
++    client, _ = _client([token, FakeResponse({"return_code": 2, "return_msg": "bad stock"})])
++
++    with pytest.raises(KiwoomAPIError) as caught:
++        client.get_daily_chart("005930", "20261008")
++
++    assert not isinstance(caught.value, KiwoomTokenError)
++
++
++class _TokenFailClient:
++    """Fails token issuance on every call and counts how often it was asked."""
++
++    def __init__(self) -> None:
++        self.calls = 0
++
++    def _fail(self, *args: Any, **kwargs: Any) -> Any:
++        self.calls += 1
++        raise KiwoomTokenError(IP_MSG, return_code=3)
++
++    get_daily_chart = _fail
++    get_investor_flow_history = _fail
++    get_index_daily_history = _fail
++    get_minute_chart_history = _fail
++
++
++class _PerStockFailClient:
++    def __init__(self) -> None:
++        self.calls = 0
++
++    def get_investor_flow_history(self, *args: Any, **kwargs: Any) -> Any:
++        self.calls += 1
++        raise KiwoomAPIError("per-stock problem", return_code=2)
++
++
++def test_flow_batch_stops_on_token_error_but_continues_on_per_stock_error(tmp_path) -> None:
++    from src.data.storage import HistoricalStorage
++
++    storage = HistoricalStorage(tmp_path)
++    codes = ["005930", "000660", "005380"]
++
++    token_client = _TokenFailClient()
++    with pytest.raises(KiwoomTokenError):
++        ingest_kiwoom_investor_flow_batch(token_client, codes, "20261008", storage=storage)  # type: ignore[arg-type]
++    assert token_client.calls == 1
++
++    other_client = _PerStockFailClient()
++    results = ingest_kiwoom_investor_flow_batch(other_client, codes, "20261008", storage=storage)  # type: ignore[arg-type]
++    assert other_client.calls == 3 and not any(r.success for r in results)
++
++
++def test_daily_batch_stops_on_token_error(tmp_path) -> None:
++    from src.data.storage import HistoricalStorage
++
++    client = _TokenFailClient()
++    with pytest.raises(KiwoomTokenError):
++        ingest_kiwoom_daily_chart_batch(
++            client, ["005930", "000660"], "20261008", storage=HistoricalStorage(tmp_path)  # type: ignore[arg-type]
++        )
++    assert client.calls == 1
++
++
++@pytest.mark.parametrize(
++    ("module", "argv"),
++    [
++        (flow_script, ["--lookback-days", "10", "005930", "000660"]),
++        (daily_script, ["005930", "000660"]),
++        (minute_script, ["--only", "005930", "000660", "--force", "--no-skip-existing", "--sleep", "0"]),
++    ],
++)
++def test_nightly_scripts_exit_1_with_one_stop_line(
++    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], module: Any, argv: list[str]
++) -> None:
++    client = _TokenFailClient()
++    monkeypatch.setattr(module.KiwoomClient, "from_env", classmethod(lambda cls: client))
++    if module is minute_script:
++        monkeypatch.setattr(module, "ingest_kiwoom_minute_chart_raw", lambda c, *a, **k: c._fail())
++    monkeypatch.setattr(sys, "argv", [module.__name__, *argv])
++
++    assert module.main() == 1
++    assert client.calls == 1  # first request only, then the step stops
++    err = capsys.readouterr().err
++    assert err.count("토큰 발급 실패") == 1

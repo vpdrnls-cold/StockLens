@@ -104,6 +104,65 @@ def test_recorded_frozen_model_file_is_consistent() -> None:
     assert len(recorded["fingerprint"]) == 64
 
 
+# --- item 89: the forward evaluation runs once ---
+
+
+def test_already_evaluated_detects_any_result_file(tmp_path) -> None:
+    assert fh.already_evaluated(tmp_path) is None
+    assert fh.already_evaluated(tmp_path / "missing_dir") is None
+    for name in fh.RESULT_FILES:  # a partial earlier run counts too
+        out = tmp_path / name.removesuffix(".csv")
+        out.mkdir()
+        (out / name).write_text("x", encoding="utf-8")
+        assert fh.already_evaluated(out).startswith("STOP:")
+
+
+def test_second_run_stops_before_loading_any_data(tmp_path, monkeypatch, capsys) -> None:
+    (tmp_path / "forward_results.csv").write_text("x", encoding="utf-8")
+
+    def must_not_load(*args, **kwargs):
+        raise AssertionError("data was loaded on a second run")
+
+    for name in ("_load_priced_dataset", "train_frozen_model", "load_intraday_panel", "select_segment"):
+        monkeypatch.setattr(fh, name, must_not_load)
+    monkeypatch.setattr("sys.argv", ["evaluate_forward_holdout.py", "--out", str(tmp_path)])
+    fh.main()
+    assert "runs once" in capsys.readouterr().out
+
+
+def test_forward2_reached_only_from_its_start() -> None:
+    # Item 94: data on/after FORWARD2_START means the look is later than planned -> stop.
+    from src.data.intraday_split import FORWARD2_START
+
+    start = pd.Timestamp(FORWARD2_START)
+    assert fh.forward2_reached([]) is None
+    assert fh.forward2_reached([pd.Timestamp("2026-12-30"), start - pd.Timedelta(days=3)]) is None
+    assert fh.forward2_reached([start]).startswith("STOP:")
+    assert "NOT read" in fh.forward2_reached([start + pd.Timedelta(days=7)])
+
+
+def test_late_run_stops_before_reading_the_forward_period(tmp_path, monkeypatch, capsys) -> None:
+    from src.data.intraday_split import FORWARD2_START
+
+    def must_not_load(*args, **kwargs):
+        raise AssertionError("data was loaded although forward2 had started")
+
+    monkeypatch.setattr(fh, "trading_calendar", lambda: [pd.Timestamp(FORWARD2_START)])
+    for name in ("_load_priced_dataset", "train_frozen_model", "load_intraday_panel", "select_segment"):
+        monkeypatch.setattr(fh, name, must_not_load)
+    monkeypatch.setattr("sys.argv", ["evaluate_forward_holdout.py", "--out", str(tmp_path)])
+    fh.main()
+    assert "FORWARD2_START" in capsys.readouterr().out
+
+
+def test_report_and_save_writes_exactly_the_guarded_files() -> None:
+    # the guard checks RESULT_FILES; report_and_save must write those same names
+    import inspect
+    source = inspect.getsource(fh.report_and_save)
+    for name in fh.RESULT_FILES:
+        assert f'"{name}"' in source
+
+
 # --- item 53 deployment rules (confirmed 2026-09-29; item 65: forward2 candidate, not deploy) ---
 
 

@@ -49,6 +49,19 @@ def test_only_the_forward_evaluation_script_reads_the_forward_holdout() -> None:
     assert readers == FORWARD_READERS
 
 
+# Item 94: forward2 (next cycle's final check) has no reader in this cycle -- not in
+# scripts/ and not in src/ (a reader is added only with the next cycle's pre-registration).
+_FORWARD2_CALL = re.compile(r"select_segment\([^)]*[\"']forward2[\"']")
+
+
+def test_nothing_reads_forward2_in_this_cycle() -> None:
+    root = Path(rmb.__file__).parents[1]
+    readers = {str(path.relative_to(root)) for folder in ("scripts", "src", "app")
+               for path in (root / folder).rglob("*.py")
+               if _FORWARD2_CALL.search(path.read_text(encoding="utf-8"))}
+    assert readers == set()
+
+
 # Item 65: the frozen model is identified by its trees, not only by best_iteration.
 def _small_model(seed: int):
     import numpy as np

@@ -15,7 +15,10 @@ Before running
      running -- what happens after each D2/I6 outcome is already decided there.
   The script stops before reading the forward period if the frozen model's
   best_iteration is not 9 (item 53) or its tree fingerprint differs from
-  config/frozen_daily_model.json (item 65).
+  config/frozen_daily_model.json (item 65), and before loading any data if a
+  result file from an earlier run is already in --out (item 89: one look only)
+  or the price files already reach FORWARD2_START (item 94: move that constant
+  first if the evaluation is later than planned).
 
     STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 PYTHONPATH=. \\
         python scripts/evaluate_forward_holdout.py
@@ -106,7 +109,7 @@ from scripts.walk_forward_backtest_compare import universe_average_gross
 from src.backtest.baseline import calculate_performance, calculate_score, run_baseline_backtest
 from src.backtest.buffered import run_buffered_backtest_with_turnover
 from src.backtest.daily_equity import daily_max_drawdown
-from src.data.intraday_split import FORWARD_MIN_DATES, IntradaySplitError, select_segment
+from src.data.intraday_split import FORWARD2_START, FORWARD_MIN_DATES, IntradaySplitError, select_segment
 from src.eval.test_lock import TestSetLockedError
 from src.ml.cross_section import daily_rank_ic, summarize_ic
 from src.ml.strategy import make_model_score_fn
@@ -120,6 +123,28 @@ TIE_PERMUTATIONS = 20  # item 52, fixed before the forward look
 TIE_SEED = 20260928
 PHASE_OFFSETS = (0, 1, 2, 3, 4)  # item 65, fixed before the forward look; 0 = reported schedule
 EXPECTED_BEST_ITERATION = 9  # item 53: a different frozen model is not the pre-registered one -> stop
+RESULT_FILES = ("forward_results.csv", "forward_monthly_ic.csv", "forward_tie_permutations.csv",
+                "forward_tie_sensitivity.csv", "forward_phase_sensitivity.csv")
+
+
+def already_evaluated(out: Path) -> str | None:
+    """Item 89: the forward period is looked at once. Any result file in ``out`` means the
+    look already happened (or started) -> stop message; None = no earlier run. Needs no data."""
+    found = [name for name in RESULT_FILES if (out / name).exists()]
+    if not found:
+        return None
+    return (f"STOP: {out / found[0]} exists -- the forward evaluation runs once (items 50/89). "
+            "Nothing was read. Rerunning is a new look and needs a new pre-registered cycle.")
+
+
+def forward2_reached(calendar: list[pd.Timestamp]) -> str | None:
+    """Item 94: data on or after FORWARD2_START means the evaluation is later than planned
+    (item 89) -- forward2 would start inside data the next-cycle grid reads as dev."""
+    if not calendar or max(calendar) < pd.Timestamp(FORWARD2_START):
+        return None
+    return (f"STOP: price data reaches {max(calendar):%Y-%m-%d}, on or after FORWARD2_START {FORWARD2_START}. "
+            "Move FORWARD2_START to the trading day after the last data date (item 89 rule) and record it "
+            "in CURRENT_STATUS first. The forward period was NOT read, so the one look is not spent.")
 
 
 def evaluate(part: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
@@ -310,6 +335,16 @@ def main() -> None:
     ap.add_argument("--out", default="reports/forward_holdout")
     args = ap.parse_args()
 
+    stop = already_evaluated(Path(args.out))
+    if stop:
+        print(stop)
+        return
+    calendar = trading_calendar()
+    stop = forward2_reached(calendar)
+    if stop:
+        print(stop)
+        return
+
     dataset = add_beta(_load_priced_dataset())
     trained, _ = train_frozen_model(dataset)
     fingerprint = frozen_model_fingerprint(trained)
@@ -324,7 +359,7 @@ def main() -> None:
     df = build_scores(dataset, panel, trained)
 
     try:
-        part = select_segment(df, "forward", caller=CALLER, horizon=5, calendar=trading_calendar())
+        part = select_segment(df, "forward", caller=CALLER, horizon=5, calendar=calendar)
     except (TestSetLockedError, IntradaySplitError) as locked:
         print(f"Forward holdout not evaluated: {locked}")
         return
@@ -408,9 +443,7 @@ def report_and_save(part: pd.DataFrame, out: Path, best_iteration: int, *, run_n
           f"{out / 'forward_tie_sensitivity.csv'}, {out / 'forward_tie_permutations.csv'}, "
           f"{out / 'forward_phase_sensitivity.csv'}")
 
-    return {"verdicts": v, "files": [out / f for f in (
-        "forward_results.csv", "forward_monthly_ic.csv", "forward_tie_permutations.csv",
-        "forward_tie_sensitivity.csv", "forward_phase_sensitivity.csv")], "results": res}
+    return {"verdicts": v, "files": [out / f for f in RESULT_FILES], "results": res}
 
 
 if __name__ == "__main__":

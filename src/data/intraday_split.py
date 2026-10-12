@@ -22,8 +22,12 @@ Segments (by decision date T)
   semi_holdout   2026-07-01 ~ 2026-09-23   already seen by the intraday IC
                                            diagnostic (Notion, 2026-09-24), so
                                            NOT clean: sign check only, once
-  forward        2026-09-24 ~              the only clean holdout; locked until
-                                           at least FORWARD_MIN_DATES dates exist
+  forward        2026-09-24 ~ 2027-01-10   the only clean holdout; locked until
+                                           at least FORWARD_MIN_DATES dates exist.
+                                           Evaluated once on 2027-01-09 (item 89);
+                                           its end is the day before forward2 (item 94)
+  forward2       2027-01-11 ~              next cycle's final check (item 84/89);
+                                           locked, NO reader in this cycle (item 94)
 
 Label purge
   A row's label ``close(T+h) / open(T+1) - 1`` reaches h trading days past T.
@@ -33,8 +37,9 @@ Label purge
 
 Locks
   ``semi_holdout`` needs STOCKLENS_CONFIRM_INTRADAY_SEMI_HOLDOUT=1 and
-  ``forward`` needs STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 for that run, the same
-  mechanism as ``src/eval/test_lock.py``.
+  ``forward`` needs STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 and ``forward2`` needs
+  STOCKLENS_CONFIRM_FORWARD2=1 for that run, the same mechanism as
+  ``src/eval/test_lock.py``. Unlocking one never unlocks another.
 """
 
 from __future__ import annotations
@@ -47,9 +52,15 @@ from src.eval.test_lock import confirm_holdout_use
 
 SEMI_HOLDOUT_ENV_VAR = "STOCKLENS_CONFIRM_INTRADAY_SEMI_HOLDOUT"
 FORWARD_ENV_VAR = "STOCKLENS_CONFIRM_INTRADAY_FORWARD"
+FORWARD2_ENV_VAR = "STOCKLENS_CONFIRM_FORWARD2"
 
 INTRADAY_DATA_START = "2025-09-01"
 FORWARD_START = "2026-09-24"
+# Item 89 decision 2 / item 94: forward2 starts the trading day after the grid's dev end
+# (2027-01-08). If the forward evaluation moves past 2027-01-09, move this BEFORE it runs
+# (dev end + 1 trading day) and record why -- evaluate_forward_holdout.py stops otherwise.
+FORWARD2_START = "2027-01-11"
+FORWARD_END = (pd.Timestamp(FORWARD2_START) - pd.Timedelta(days=1)).date().isoformat()
 # Pre-registered: the forward holdout is evaluated once, after at least this
 # many decision dates exist (about 3 months of trading days).
 FORWARD_MIN_DATES = 60
@@ -72,7 +83,8 @@ SEGMENTS = {
     "dev": Segment("dev", "2025-09-01", "2026-06-30"),
     **{b.name: b for b in DEV_BLOCKS},
     "semi_holdout": Segment("semi_holdout", "2026-07-01", "2026-09-23", SEMI_HOLDOUT_ENV_VAR),
-    "forward": Segment("forward", FORWARD_START, None, FORWARD_ENV_VAR),
+    "forward": Segment("forward", FORWARD_START, FORWARD_END, FORWARD_ENV_VAR),
+    "forward2": Segment("forward2", FORWARD2_START, None, FORWARD2_ENV_VAR),
 }
 
 

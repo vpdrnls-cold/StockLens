@@ -56,6 +56,13 @@ Risk profiles (item 56)
   of the pre-registered strategy. Profile runs save to
   reports/daily_picks_<profile>/ instead.
 
+Profile rankings for the viewer (item 92)
+  Whenever a neutral run writes quant cards it also writes
+  reports/analyst_cards/<T>/profile_ranks.json: the conservative and aggressive
+  orders for T, computed with ranked_for_profile() -- the same function a
+  --profile run uses -- so the viewer shows exactly what --profile would print.
+  The paper log, the buffered holdings and the quant cards stay neutral.
+
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py --top-n 5 --no-save
     STOCKLENS_UNIVERSE=top50 PYTHONPATH=. python scripts/recommend.py --profile conservative
@@ -80,6 +87,7 @@ from scripts.run_ml_backtest import (
     train_frozen_model,
 )
 from src.analysts.notices import RANK_LABEL, REFERENCE_RANK_NOTICE
+from src.analysts.profile_ranking import build_profile_ranks, write_profile_ranks
 from src.analysts.quant import build_quant_card, write_quant_card
 from src.data.session import intraday_bar_error
 from src.data.storage import HistoricalStorage
@@ -112,8 +120,27 @@ def apply_profile(day: pd.DataFrame, profile: str, lam: float) -> pd.DataFrame:
     """Add personalized_score + contribution columns for one decision date (index = stock_code)."""
     sig = day.reset_index()[PROFILE_SIGNAL_COLUMNS].assign(predicted_return=day["score"].to_numpy())
     scored = personalize_scores(sig, profile, lam=lam if profile != "neutral" else None).set_index("stock_code")
-    cols = ["personalized_score", "contribution_model", "contribution_risk", "contribution_volume"]
+    cols = ["personalized_score", "contribution_model", "contribution_risk", "contribution_momentum", "contribution_volume"]
     return day.join(scored[cols])
+
+
+def ranked_for_profile(day: pd.DataFrame, profile: str, lam: float) -> pd.DataFrame:
+    """Profile columns + ``rank`` for one decision date. Neutral ranks by the model score
+    (the paper log's order); other profiles by personalized_score (item 56). One function
+    for --profile runs and profile_ranks.json (item 92), so the two cannot disagree."""
+    out = apply_profile(day, profile, lam)
+    out["rank"] = rank_like_engine(out["score" if profile == "neutral" else "personalized_score"])
+    return out
+
+
+VIEWER_PROFILES = ("conservative", "aggressive")  # item 92: neutral = the quant cards themselves
+
+
+def profile_rank_rows(ranked: pd.DataFrame, model_rank: pd.Series, names: dict[str, str]) -> list[dict]:
+    cols = ["rank", "personalized_score", "contribution_model", "contribution_risk",
+            "contribution_momentum", "contribution_volume"]
+    return [{"stock_code": code, "name": names.get(code, code), "model_rank": int(model_rank[code]),
+             **{c: r[c] for c in cols}} for code, r in ranked.iterrows()]
 
 
 def stock_names() -> dict[str, str]:
@@ -310,9 +337,9 @@ def main() -> None:
     # The depth-2, 9-round model yields only ~8 distinct scores a day, so ties
     # are common (item 51) -- the rule must match what was backtested.
     lam = profile_lambda(trained, splits, args.profile)
-    day = apply_profile(day, args.profile, lam)
+    base_day = day.copy()  # before profile columns -- input of profile_ranks.json (item 92)
+    day = ranked_for_profile(day, args.profile, lam)
     rank_col = "score" if args.profile == "neutral" else "personalized_score"
-    day["rank"] = rank_like_engine(day[rank_col])
     day["tie_size"] = day.groupby(day[rank_col].round(9))[rank_col].transform("size").astype(int)
     day["percentile"] = day["score"].rank(pct=True)
     contribs = shap_contributions(trained, day)
@@ -434,6 +461,13 @@ def main() -> None:
             write_quant_card(card, Path(args.cards_out))
         print(f"카드 저장: {Path(args.cards_out) / f'{date:%Y%m%d}'}/ ({n}개)"
               + (f" — 기존 카드 {overwritten}개 덮어씀" if overwritten else ""))
+        profiles = {}
+        for p in VIEWER_PROFILES:  # item 92: same path as `--profile p`
+            p_lam = profile_lambda(trained, splits, p)
+            profiles[p] = (p_lam, profile_rank_rows(ranked_for_profile(base_day, p, p_lam), day["rank"], names))
+        path = write_profile_ranks(build_profile_ranks(
+            decision_date=date.date(), profiles=profiles, fingerprint_match=model_ok), Path(args.cards_out))
+        print(f"성향 순위 저장: {path} (" + ", ".join(f"{PROFILE_LABELS[p]} λ={profiles[p][0]:.3f}" for p in profiles) + ")")
 
 
 if __name__ == "__main__":

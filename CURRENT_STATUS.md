@@ -96,7 +96,8 @@ StockLens는 개인화된 주식 분석/추천 시스템으로 개발 중이다.
     `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/check_forward_minute_coverage.py`.
     10일 넘게 비우지 않는다.
 4.  평가 전 환경 고정(12월): xgboost 등 라이브러리 변경 금지 — 트리 지문이 달라지면 forward 평가가 멈춤.
-5.  forward 평가 1회(2027-01 첫 주) → 결과를 새 항목으로 기록 → 항목 53(+65 보강) 표대로 다음 사이클.
+5.  forward 평가 1회(2027-01-09) → 결과를 새 항목으로 기록 → 항목 53(+65 보강) 표대로 다음 사이클.
+    **1월까지의 순서표·동결(12/1)·실행일 절차는 항목 89.**
 6.  그 뒤 새 사이클: 항목 67 초안을 확정해 사전등록. 핵심은 검정력 — 50종목·IC 0.02면 holdout으로 확인 불가(≈12년).
 7.  실험 백로그는 항목 78: forward 전에는 A1(추가 150종목 종목 holdout 점검, 재훈 결정 필요)·A3·A5(12월 전),
     forward 후에는 C1~C9. 실행 전 각각 사전등록.
@@ -984,6 +985,10 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과�
   1. **2일차를 10/7 → 10/8(목)로 교체**: 10/8 20:30 cron 스냅샷 + 다음 날(10/9, 한글날 휴장이지만 API 조회 가능) `snapshot --date 20261008`. 판정 규칙(두 날·세 API·전 필드에서 20:30 값 = 다음 날 값이면 20:30, 하나라도 다르면 규칙 2로 멈춤)은 그대로.
   2. **1일차 다음 날 스냅샷 시점 이탈 기록**: 10/6의 "다음 날" 스냅샷은 10/7이 아니라 10/8 10:33에 찍힘(`20261006/103311.json`). 확정 후 더 지난 시점이라 "20:30 이후에도 바뀌는가"를 보는 방향으로는 보수적(늦게 바뀐 값도 잡음) — 그대로 사용.
   3. `compare`는 두 날 스냅샷이 모두 생긴 뒤 한 번에 실행. 10/6을 먼저 보지 않음. 10/9(휴장) 20:30 cron이 만드는 `20261009/`(0행)는 판정에 쓰지 않음. 판정 후 cron 측정 줄 삭제.
+- **측정 계획 3차 수정 (2026-10-09, 재훈 결정, `compare`를 보기 전)**: 10/8 20:30 cron 스냅샷도 없음(맥이 잠들었고 야간 수집은 22:44 수동 실행, `session_final_probe/20261008/` 없음) → 2일차 20:30 값은 다시 받을 수 없음.
+  1. **2일차를 10/8 → 10/12(월)로 교체**: 10/12 20:30 cron 스냅샷(그 전에 키움 IP 등록, 맥 깨어 있게 — 재훈) + 10/13 이후 `snapshot --date 20261012`. 판정 규칙은 그대로.
+  2. 10/12 20:30 스냅샷도 빠지면 다음 거래일로 같은 방식으로 미룸(규칙 불변, 기록만).
+  3. `compare --date 20261006`·`compare --date 20261012`는 두 날 다음 날 스냅샷까지 모두 생긴 뒤 한 번에 실행. `20261005/`(대체공휴일)·`20261009/`(한글날, 토큰 실패 0행)는 판정에 쓰지 않음.
 - **테스트**: `tests/test_check_session_final_time.py` 2개(날짜 행 선택, 순서 섞인 스냅샷에서 마지막 변경 시각·필드).
 - **결과**: (측정 후 기록)
 
@@ -1582,7 +1587,7 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과�
 - **한계**: 토큰이 이미 발급된 뒤 실행 중 IP가 바뀌어 데이터 요청에서 8050이 나는 경우는 여전히 종목별 실패로 처리(요청 단계 오류 메시지 해석은 하지 않음). 네트워크 자체 오류(`KiwoomTransportError`)도 그대로 종목별.
 - **테스트**: `tests/test_kiwoom_token_failure.py` **8개** — 8050 → `KiwoomTokenError`·재시도 없음·한 줄에 키 없음 / 토큰 유량 초과 재시도 소진 → `KiwoomTokenError` / 토큰 발급 후 데이터 요청 오류는 `KiwoomTokenError` 아님 / 수급 배치: 토큰 오류는 1회 호출 후 중단, 종목별 오류는 3종목 모두 진행 / 일봉 배치 중단 / 야간 스크립트 3개: 종료 코드 1·요청 1회·중단 줄 1번. 수정 전 코드에서 5개 실패 확인. Claude VM(Python 3.13, pandas 3.0.5)에서 전체 459 + 8 = **467개 통과**. 재훈 기기 확인 필요.
 
-86. **1-4 KOSPI200 200종목 일봉 품질 점검 + 정리 규칙 결정 대기 (2026-10-08) — 무결성만 확인, 수익률·점수 계산 없음, forward 미열람**
+86b. **1-4 KOSPI200 200종목 일봉 품질 점검 + 정리 규칙 결정 대기 (2026-10-08) — 무결성만 확인, 수익률·점수 계산 없음, forward 미열람**
 
 - **목적**: 항목 84의 M1은 200종목으로 학습하고 dev 평가도 200종목이라, 결과를 보기 **전에** 데이터 정리 규칙을 정해야 함(항목 67 E의 C8 포함). 정한 규칙은 항목 84 보완으로 사전등록에 추가.
 - **추가**: `scripts/audit_universe_data.py`(점검 범위 2002-10-29 ~ forward 전날 2026-09-23, 상장일 이전 봉은 저장분 전체), `KiwoomClient.get_stock_list()`(`ka10099` 종목정보 리스트, 상장일 `regDay`), `config/listing_dates_kospi200.json`(200/200, 2026-10-08, raw는 `data/raw/kiwoom/ka10099/`), 결과 `reports/data_audit/kospi200_daily_audit.csv`. 테스트 `test_audit_universe_data.py` 4개 + `test_kiwoom_index_constituents.py` 1개.
@@ -1628,7 +1633,163 @@ allowlist로만(항목 65), 고정 모델은 트리 지문으로 확인, 결과�
 - **결과**
   - 1차: A 통과(58초). **B 실패 — 실제 버그 발견**: 새 엔진(`point_in_time.py`)에서 한 기간 내내 거래정지된 보유 종목은 진입일(T+1)이 평가 가격일(마지막 종가일)보다 늦게 기록되어 `daily_max_drawdown`이 KeyError. 합성 테스트에는 기간 전체 정지 사례가 없었음. 수정: 그 기간에 새 가격이 없는 포지션은 마지막 평가일로 날짜를 맞춤. 회귀 테스트 추가(`test_position_halted_for_a_whole_period_keeps_dates_ordered`).
   - 2차: **REHEARSAL PASSED** — A 13개·B 16개 점검 통과(총 228초): forward 시작 이후 행 없음, dev 196일, 결과 파일 5개·실행 로그, 전략 4종, IC·수익률 유한, 판정 키, 위상 표 2×5 / 후보 6×오프셋 5, 수치 유한, 미래 정보 없는 엔진 카운터, 후보별 판정, 선택 결과 유효, forward2 기간 형식, 모델별 IC·표준편차, 진단, 정리 규칙 적용, 최종 M1 재학습 기록(트리 ≥100, 지문 64자), 파일 5개.
-  - 참고(개수만): 리허설 데이터셋에서 정리 규칙으로 빠진 행 19,475개 — 2002-10-29 이전 행 포함 개수(항목 86의 4,073은 2002-10-29 이후만). 2002년 이전 행은 M1 학습 구간(`TRAIN_START_DATE` 이후)에 들어가지 않음.
+  - 참고(개수만): 리허설 데이터셋에서 정리 규칙으로 빠진 행 19,475개 — 2002-10-29 이전 행 포함 개수(항목 86b의 4,073은 2002-10-29 이후만). 2002년 이전 행은 M1 학습 구간(`TRAIN_START_DATE` 이후)에 들어가지 않음.
 - **남은 한계**: 1월의 실제 데이터(forward 구간 분봉·일봉, 200종목 dev)의 형태 문제는 리허설로 완전히 배제되지 않음. 1월 실행 직전에 이 리허설을 한 번 더 돌림(1-2 순서표에 포함 예정).
 - **테스트**: +2(`test_point_in_time_engine.py` 1, `test_forward_access_guard.py` 1). 전체 **497개 통과**(core5·top50).
 - **재실행 명령**: `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/rehearse_january_runs.py`
+
+89. **1-2 1월 1회 실행 순서표 — 지금부터 2027-01-09까지 끝낼 것 (2026-10-09 작성, 재훈 결정 반영) — 계획·절차, 코드·데이터·모델·판정 변경 없음 (실험 아님)**
+
+- **지위**: 1월의 두 1회 실행(forward 평가 항목 50·53·65, 다음 사이클 그리드 항목 84·85)과 그 준비의 순서표. 판정 규칙·후보·문턱은 각 항목 그대로이고, 이 항목은 **언제·무엇을·어떤 순서로** 할지만 정한다. 날짜 계산은 KRX 휴장일 달력만 사용(forward 데이터 미열람).
+- **재훈 결정 (2026-10-09)**
+  1. **forward 평가일 = 2027-01-09(토)**, 1/8(금) 야간 수집 완료 뒤. 휴장일 달력 추정: 60번째 판단일 12/22(T+5 = 12/30), 1/8까지면 판단일 약 65개. 주말이라 장중 미완성 봉 위험 없음.
+  2. **그리드 `--dev-end` = 평가에 쓴 마지막 거래일 = 2027-01-08.** 그리드는 forward 결과를 새 항목에 **기록한 뒤 같은 날** 실행. `STOCKLENS_CONFIRM_FINAL_TEST=1`은 그 단계에서 재훈이 직접 입력.
+  3. **코드 동결 = 2026-12-01부터, 1월 실행 경로**(아래 "동결 범위").
+  4. **지문 불일치 대비**: 12/1에 일봉 스냅샷 보관. 1월에 불일치면 forward를 읽기 전에 멈추고(스크립트가 이미 그렇게 동작), 원인 확인 후 복구 방법을 그때 재훈이 결정.
+  5. **forward2 잠금 + forward 평가 재실행 방지 관문을 11월 안에 구현**(동결 전).
+  6. A2(KOSDAQ150 종목 holdout)는 **1월 뒤로 미룸**(다음 사이클 C4와 함께). 항목 64 2일차는 10/12로 재측정(항목 64 3차 수정). 10/8 페이퍼 로그는 주말에 수동 보충. 맥 깨우기는 수동 관리 유지. 항목 86 중복 번호는 두 번째를 86b로 정리(완료).
+
+**0. 매주 (주말 1회, 1/9까지) — 수집 유지 점검**
+  - 야간 수집 결과: `for f in $(ls logs/nightly_ingest_*.log | tail -5); do echo "$f $(grep '=== done' $f | tail -1)"; done` → `status=1`이면 로그를 열어 원인 확인(토큰 8050 = IP 미등록).
+  - forward 분봉 커버리지: `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/check_forward_minute_coverage.py` → 빠진 날이 있으면 출력된 `--lookback-days N` 재수집 명령 실행. 야간 수집은 최근 10일만 다시 받으므로 **10일 넘게 비우지 않음**. 목표 100%(80% 미만이면 I6 판정 보류, 항목 53).
+  - 수정주가 감시(항목 82): `grep -h "price adjustments" logs/nightly_ingest_*.log | tail -1` → top50 종목에 `partial_change`·`rows_removed`(또는 `uniform_rescale`)가 생기면 그 주에 지문 확인(아래 월 1회 명령)을 앞당김.
+  - 페이퍼 로그: `ls reports/daily_picks | tail -3` — 매주 금요일 판단일 1개. 휴장 금요일(12/25, 1/1)은 야간 수집이 그대로 돌아 T = 직전 거래일(12/24, 12/30)로 자동 생성(키움 IP 등록된 네트워크 필요).
+  - 휴장일(분봉 없음이 정상): 10/9, 12/25, 12/31, 1/1. 그 외 평일에 수집이 없으면 누락.
+
+**1. 10월 (~10/31)**
+  - [ ] 10/10~11: 키움 IP 등록 → `STOCKLENS_NIGHTLY_DAILY=1 bash scripts/nightly_ingest.sh` (일봉 마지막 날 10/8 → `reports/daily_picks/20261008.csv` 생성, `status=0` 확인). **10/12(월) 밤 이후로 미루면 T가 10/12가 됨.**
+  - [ ] 10/12 20:30 cron 스냅샷(맥 깨어 있게) → 10/13 이후 `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/check_session_final_time.py snapshot --date 20261012` → `compare --date 20261006`, `compare --date 20261012` → 항목 64 규칙대로 판정·기록 → crontab의 `30 20 * * 1-5 ... check_session_final_time.py snapshot` 줄 삭제(재훈).
+  - [ ] 10월 말 지문 확인(월 1회, 11월 말에도): `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/run_ml_backtest.py` → `MATCH` 두 줄(고정 모델 지문, 운용 경로).
+
+**2. 11월 (~11/30) — 동결 전 마지막 코드 작업 (각각 새 항목으로 기록, 테스트 포함)**
+  - [x] **forward 평가 재실행 방지** (항목 90, 2026-10-09 완료): `evaluate_forward_holdout.py`가 `reports/forward_holdout/forward_results.csv`가 이미 있으면 데이터를 읽기 전에 멈춤(그리드 관문과 같은 방식). 리허설(`report_and_save`, 임시 폴더)에는 영향 없음 — 테스트로 확인.
+  - [x] **forward2 잠금** (항목 94, 2026-10-12 완료): 시작일 = dev-end 다음 거래일 **2027-01-11**을 단일 출처(`src/data/intraday_split.py` 등)에 상수로. 1월 이후 forward2를 읽는 경로는 없음(평가 스크립트는 다음 사이클에서 사전등록). 기존 forward 잠금과 같은 방식: `select_segment(..., "forward2")` 사용처 검사 테스트, 분봉 raw 허용 목록 테스트. forward 평가가 1/9 뒤로 밀리면 시작일 상수도 평가 **전에** 고치고 기록(dev-end + 1거래일 규칙). 구현 세부는 그 항목에서 결과를 보기 전에 정함.
+  - [x] 위 두 작업 뒤: 전체 테스트, 지문 `MATCH`, 리허설 `REHEARSAL PASSED` (2026-10-12, 549개·MATCH·PASSED, 항목 94).
+  - [ ] (선택) 동결 범위 밖의 제품 레이어 작업(뷰어·카드)은 11월에 끝내 두는 편이 안전.
+
+**3. 동결 직전 (11/28~11/30) → 12/1 동결**
+  - [ ] 전체 테스트: `PYTHONPATH=. .venv/bin/python -m pytest -q` (통과 수 기록).
+  - [ ] 지문: `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/run_ml_backtest.py` → `MATCH`.
+  - [ ] 리허설: `STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/rehearse_january_runs.py` → `REHEARSAL PASSED`.
+  - [ ] 환경 기록: `.venv/bin/python -c "import sys,xgboost,pandas,numpy,sklearn,scipy;print(sys.version.split()[0],xgboost.__version__,pandas.__version__,numpy.__version__,sklearn.__version__,scipy.__version__)"` → `requirements.txt`와 같은지(2026-10-09 기준 Python 3.14.3, xgboost 3.4.1, pandas 3.0.5, numpy 2.5.2).
+  - [ ] 커밋(재훈) 후 해시 기록: `git rev-parse HEAD`.
+  - [ ] 12/1 일봉 스냅샷(약 1.2GB): `mkdir -p ~/StockLens_snapshots/20261201 && cp -Rp data/processed/historical data/raw/kiwoom/ka10081 ~/StockLens_snapshots/20261201/`
+  - **동결 범위 (12/1~1/9)**: `scripts/evaluate_forward_holdout.py`, `run_next_cycle_grid.py`, `rehearse_january_runs.py`, `run_ml_backtest.py`, `walk_forward_backtest_compare.py`, `evaluate_cross_sectional_holdout.py`, `src/backtest/`, `src/data/dataset.py`·`intraday_split.py`·저장소, `src/features/`, `src/models/`, `src/eval/`, `config/frozen_daily_model.json`, `requirements.txt`, `.venv` 패키지, Python. 권장: macOS·Homebrew 업데이트도 1/9 뒤로.
+  - **동결 중 허용**: 제품 레이어(`app/`, 분석가 카드), 수집 코드(`src/api/`, ingest 스크립트)의 버그 수정 — 수정할 때마다 전체 테스트 + 지문 `MATCH`. **동결 범위 수정은 리허설·테스트가 찾은 버그뿐**이고, 새 항목에 사유를 기록하고 리허설을 다시 통과해야 함.
+
+**4. 12/1 ~ 1/8**
+  - 0번 주간 점검만. 12/30(수)이 판단일 60개에 필요한 마지막 봉(추정) — 12/28~12/30 야간 수집은 특히 확인.
+  - 1/2(토) 주간 점검 때 커버리지를 100%로 맞춰 둠(1/9 당일 재수집 부담 최소화).
+
+**5. 2027-01-09(토) 실행일 — 순서대로, 각 단계의 중단 조건을 통과해야 다음으로**
+  1. **사전 확인**: 1/8 야간 로그 `status=0`(아니면 `STOCKLENS_NIGHTLY_DAILY=1 bash scripts/nightly_ingest.sh` 재실행). `git status`에 동결 범위 변경 없음, 해시 기록.
+  2. **커버리지**: `check_forward_minute_coverage.py` → 누락 재수집 → 다시 점검. 재수집 후에도 80% 미만이면 사전등록대로 진행(I6 판정 보류는 스크립트가 처리).
+  3. **지문**: `run_ml_backtest.py` → `MATCH`. 불일치면 **중단**(결정 4): 항목 82 기록으로 원인 종목·날짜 확인, 12/1 스냅샷과 비교, 복구 방법을 재훈이 결정. forward는 아직 읽지 않았으므로 1회 미소진.
+  4. **리허설**: `rehearse_january_runs.py` → `REHEARSAL PASSED`. 실패면 중단(동결 예외 규칙으로 버그 수정 → 리허설 재통과 → 이 단계부터 다시).
+  5. **실행 전 스냅샷**: `mkdir -p ~/StockLens_snapshots/20270109 && cp -Rp data/processed/historical data/raw/kiwoom/ka10081 ~/StockLens_snapshots/20270109/` (분봉 raw는 야간 iCloud 백업 확인).
+  6. **forward 평가 (1회)**: `STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_INTRADAY_FORWARD=1 PYTHONPATH=. .venv/bin/python scripts/evaluate_forward_holdout.py`
+     - "Forward holdout not evaluated"(판단일 < 60 등) → forward 미노출·미소진. 원인 확인 후 다음 주말로(forward2 시작일 상수도 함께 미룸).
+     - 완료 → `reports/forward_holdout/` 5개 파일 + 실행 로그.
+  7. **결과 기록 (새 항목)**: 판단일 수, 커버리지, D2·I6 판정, `overlay_forward2_candidate`, 보고 지표, 동점 민감도 백분위(10% 미만/90% 초과면 수익률은 "동점 규칙이 만든 숫자"로 표기, 항목 53), 해석 한계. **운용 경로·판정 규칙·문턱은 바꾸지 않음**(forward 단독 운용 반영 금지, 항목 53·65).
+  8. **그리드 (1회)**: `STOCKLENS_UNIVERSE=top50 STOCKLENS_CONFIRM_FINAL_TEST=1 PYTHONPATH=. .venv/bin/python scripts/run_next_cycle_grid.py --dev-end 2027-01-08` — 환경변수는 재훈이 이 단계에서 직접 입력. `STOP:`이 나오면 메시지대로 원인만 고치고, 다른 잠금 환경변수를 켜서 우회하지 않음.
+  9. **결과 기록 (새 항목)**: 6개 후보 결과, `decide()` 채택 구성, forward2 기간(또는 "통과 판정 없음"), M1 채택 시 `config/next_cycle_model.json` 지문. 항목 84 E 순서대로 — 지표·후보·조건 변경 없음.
+  10. **forward2 시작 2027-01-11(월)**: 잠금 상태 확인. 매주 점검은 계속.
+  - 예상 소요: 사전 확인~리허설 약 10분(리허설 약 4분), 평가 약 1~2분, 그리드는 M1 학습 포함 수 분. 하루를 비워 둠.
+
+- **1월 이후로 미룬 미결 (지금 결정 불필요)**: forward2 동안 `recommend.py`·페이퍼 로그를 채택 구성으로 바꿀지(항목 85는 운용 경로를 바꾸지 않음, 항목 84 E-3은 화면 문구만 정함) — 추천: 그리드 결과 기록 때 별도 결정. 항목 67 초안의 남은 부분, A2·C4.
+- **해석 한계**: 판단일 수(약 65)는 휴장일 달력으로 추정한 값 — 실제 개수는 평가 스크립트 출력으로 확인. 12/1 이후 키움 수정주가 재계산은 막을 수 없고 감시·스냅샷으로만 대응.
+
+90. **forward 평가 재실행 방지 관문 (2026-10-09, 항목 89 11월 작업) — 판정·모델·데이터 변경 없음 (엔지니어링, 실험 아님), forward 미열람**
+
+- **문제**: `evaluate_forward_holdout.py`는 판단일 60개·지문 관문만 있고 "이미 평가했으면 중단"이 없어 1회 평가를 두 번 볼 수 있었음(그리드 `run_next_cycle_grid.py`에는 `summary.csv` 관문 있음).
+- **변경**: `RESULT_FILES`(결과 파일 5개 이름의 단일 출처, `report_and_save` 반환값도 이것을 씀) + `already_evaluated(out)` — `--out`에 결과 파일이 **하나라도** 있으면(중간에 멈춘 실행 포함) `main()`이 데이터 로딩·모델 학습 **전에** `STOP: ... runs once` 한 줄을 남기고 끝남. 리허설은 `report_and_save`를 임시 폴더로 직접 부르므로 영향 없음. 독스트링에 한 줄 추가.
+- **한계**: `--out`을 다른 폴더로 주면 우회 가능 — 1회 규칙(항목 50)은 여전히 사람의 규칙이고, 관문은 실수로 다시 돌리는 것을 막는 장치.
+- **테스트**: `test_evaluate_forward_holdout.py` +3 — 결과 파일 5개 각각 감지·빈 폴더 통과 / 두 번째 실행은 `_load_priced_dataset`·`train_frozen_model`·`load_intraday_panel`·`select_segment`를 하나도 부르지 않고 멈춤 / `report_and_save`가 쓰는 이름 = 관문이 보는 이름. 전체 **500개 통과**(core5·top50). 리허설 `REHEARSAL PASSED`(232초), `reports/forward_holdout/` 생성 안 됨 확인.
+
+91. **웹 설문 페이지 (W2) — 설계 (2026-10-12, 만들기 전 고정, 재훈 결정: 1월까지 Streamlit 유지·로컬 전용) — 모델·전략·순위·페이퍼 로그 변경 없음 (제품 레이어, 실험 아님)**
+
+- **목적**: 최종 목표(설문 → 개인화 순위 + 근거)의 웹 쪽 첫 단계. 지금 설문은 CLI(`scripts/survey.py`)뿐이고, 뷰어는 저장된 결과를 읽기만 함. 1월까지의 웹 작업 목록(재훈과 합의): W1 실제 화면 점검, **W2 웹 설문(이 항목)**, W3 성향별 순위 표시(`recommend.py`가 3성향 순위를 미리 계산해 JSON 저장 — 별도 항목, 동결 12/1 전), W4 성향별 카드 순서(**항목 70에서 이미 구현** — `box_order`), W5 근거 설명 다듬기, W6 뉴스 카드 품질.
+- **고정 조건 (만들기 전)**:
+  1. 설문 내용·채점·경고·부적격 규칙은 `src/recommendation/survey.py`(항목 57) 그대로 — 질문·문턱·문구를 새로 만들지 않음. `SURVEY_VERSION` 불변. 저장 형식도 `survey.save()` 그대로(`data/user_profile.json`, gitignore). CLI와 웹 결과가 같은 답에 대해 같아야 함(테스트).
+  2. 선택지는 기본값 없이 시작(`index=None`) — 미리 골라 둔 답이 결과를 기울이지 않게. 6문항 모두 답하기 전에는 진단하지 않음.
+  3. Q3 "최대 10% 손실"을 고르면 CLI와 같은 경고문을 보여 주고 예/아니오를 받음(기본값 없음). 아니오 → 부적격(기존 규칙).
+  4. 부적격이면 모델 참고 순위를 보여 주지 않음(기존 뷰어 동작 유지), 안내 문구는 CLI 명령 대신 설문 페이지 링크로.
+  5. 설문 결과는 **순위를 바꾸지 않음** — 지금 뷰어에서는 참고 박스 순서만(43.6). 성향별 순위는 W3에서.
+  6. 로컬 전용(43.7). `.venv-ui`만, `.venv` 불변.
+- **구조**:
+  1. `app/viewer.py` → `st.navigation` 라우터(페이지 "분석가 패널"·"투자성향 진단"), 실행 명령 그대로(`.venv-ui/bin/streamlit run app/viewer.py`). 기존 화면 코드는 `app/panel.py`로 이동(내용 변경은 4번 안내 문구·설문 링크뿐).
+  2. `app/survey_page.py` — 얇은 화면.
+  3. `src/ui/survey_form.py` — Streamlit import 없음(`.venv`에서 테스트): 미응답 목록, 선택값 → 답 dict, 경고 응답 → `warning_acknowledged`, 저장 경로(`STOCKLENS_PROFILE_PATH` 시험용 덮어쓰기, 뷰어와 단일 출처).
+- **테스트 계획**: 미응답 감지, 경고 미응답이면 진단 불가, 같은 답 → CLI(`--answers`)와 같은 결과, 저장 → `viewer_data.load_profile`이 읽음, 모듈에 streamlit import 없음. 헤드리스(AppTest, 임시 경로)로 두 페이지 예외 없음.
+- **결과 (2026-10-12, 위 설계 그대로 구현)**:
+  - `app/viewer.py` = 라우터(`st.navigation`: 분석가 패널 기본, 투자성향 진단), `app/panel.py` = 기존 화면(변경: 경로 결정이 `survey_form.profile_path` 단일 출처, 부적격 안내가 CLI 명령 → 설문 페이지 링크, 진단 전이면 사이드바에 설문 링크), `app/survey_page.py` = 설문(기본 선택 없음, Q3 10% 경고 예/아니오 기본값 없음, 진단 시 `survey.save` → `data/user_profile.json`, 결과는 `survey.explain` 문구 그대로).
+  - `src/ui/survey_form.py`: `unanswered`, `form_problem`, `ack_value`, `score_form`(→ `survey.evaluate`), `profile_path`.
+  - **가드 범위 보완**: 가격 미접근(`test_viewer_never_reads_prices_or_returns`), bare 조건식 금지, "추천" 문구 금지(`test_notices.SCREENS`)가 `app/viewer.py`만 보고 있어 화면 코드를 `panel.py`로 옮기면 조용히 무력화될 상황 → `app/*.py` 전체 + `survey_form.py`로 확장, 라우터의 `st.Page` 목록 = `app/` 페이지 파일임을 검사하는 테스트 추가.
+- **테스트**: `tests/test_ui_survey_form.py` 10개(미응답, 경고 미응답, 경고 없는 답의 확인값 무시, **CLI `--answers`와 저장 JSON 동일 5경우**(공격·중립·안정·부적격·10% 확인), 저장 → `load_profile`, streamlit 미import) + 뷰어 테스트 1개. 전체 **511개 통과**.
+- **헤드리스 확인** (`.venv-ui`, AppTest, 실제 카드 읽기 전용, 프로필은 임시 경로 — `data/user_profile.json` 미변경): 두 페이지 예외 없음, 빈 제출 → 미응답 6개 오류, Q3 10% → 경고·확인 라디오 표시·미확인 제출 차단 → 예 → 안정형 저장, 답 변경 → 공격형, Q1 1개월 → 부적격 저장 → 패널이 순위 숨기고 설문 링크 표시.
+- **미확인**: 재훈의 실제 브라우저 화면(W1 점검 때 함께).
+
+92. **성향별 순위 표시 (W3) — 설계 (2026-10-12, 만들기 전 고정, 재훈 결정: W3 → 실시간 참고 정보 순) — 모델·전략·중립 순위·페이퍼 로그·판정 변경 없음 (제품 레이어, 실험 아님)**
+
+- **목적**: 설문 성향(항목 57)이 화면의 순위에 반영되게. 지금 성향별 순위는 CLI `recommend.py --profile`에서만 보이고, 뷰어는 모델(중립) 순위만 보여 줌. 성향 재랭킹은 항목 56에서 검증한 경로(AGENTS 43.6 "validated path") 그대로 사용.
+- **고정 조건 (만들기 전)**:
+  1. 계산은 `--profile` 실행과 **같은 함수**(`profile_lambda` 학습 구간 λ 보정 → `apply_profile` → `rank_like_engine`). 새 가중치·새 feature·새 λ 없음. 같은 판단일에 `--profile X`의 순위와 같아야 함(테스트).
+  2. 중립 실행이 퀀트 카드를 쓸 때(`should_write_cards`: 저장 실행 또는 `--cards-only`)만 같은 실행에서 안정형·공격형을 계산해 `reports/analyst_cards/<T>/profile_ranks.json` 1개로 저장. 퀀트 카드·`reports/daily_picks/<T>.csv`·전략 보유(buffer)·로그 관문(항목 71)은 그대로. `--cards-only`의 로그 일치 확인이 실패하면 이 파일도 쓰지 않음.
+  3. 파일 내용: 성향별 λ, 전 종목의 성향 순위·성향 점수·기여(모델/변동성/거래량)·모델 순위. 수익률·가격 없음.
+  4. 화면: 사이드바 성향(기본 = 설문 결과)이 중립이 아니면 "성향 반영 순위 상위 10"을 모델 순위 옆에 표시(모델 순위 표는 그대로 유지), 종목 상세에 그 종목의 성향 순위와 기여. 문구: 항목 77 규칙("추천" 금지), 항목 56 한계("의도한 방향 작동·모델 신호 유지만 확인, 수익 개선 아님"), 평가 대상 전략·보유 목록은 중립 기준임을 명시.
+  5. 파일이 없는 판단일(10/8 이전)은 "이 판단일에는 성향 순위 파일이 없음" + 생성 명령.
+- **구조**: `src/analysts/profile_ranking.py`(카드 빌더·저장, 순수), `scripts/recommend.py`(성향 순위 계산을 함수 하나로 묶어 `--profile` 경로와 카드 경로가 공유), `src/ui/viewer_data.py`(읽기·표 행), `app/panel.py`(표시).
+- **테스트 계획**: 빌더(순위 1..n, 기여 합 = 성향 점수, 엄격 JSON, 가격·수익률 키 없음), 카드 경로 순위 = `--profile` 경로 순위(같은 함수·같은 입력), 쓰기 조건(중립 저장·cards-only만, `--no-save`·성향 실행은 안 씀), 뷰어 읽기·없는 파일 처리, 화면 문구 가드.
+- **결과 (2026-10-12, 위 설계 그대로 구현)**:
+  - `scripts/recommend.py`: `ranked_for_profile(day, profile, lam)`(성향 열 + 순위 — 중립은 모델 점수, 그 외는 `personalized_score`, 동점 규칙 `rank_like_engine` 그대로)를 `--profile` 경로와 카드 경로가 함께 사용. 카드를 쓰는 중립 실행은 퀀트 카드 뒤에 안정형·공격형 λ 보정(학습 구간, `profile_lambda` 그대로) → `profile_ranks.json`. `apply_profile`이 `contribution_momentum`도 붙이도록(현재 성향은 0, 기여 합 확인용) — 콘솔 출력 불변.
+  - `src/analysts/profile_ranking.py`: 빌더·저장(순위 1..n 연속, 기여 합 = 성향 점수, 유한값, 중립 거부), **표준 라이브러리만**(뷰어 `.venv-ui`에 xgboost 없음 — 처음 버전이 `quant.py` 경유로 xgboost를 끌어와 뷰어에서 import 실패하는 것을 확인하고 고침).
+  - 뷰어: 사이드바 "투자성향"(기본 = 설문 결과)이 안정형·공격형이면 "성향 반영 순위 상위 10" 표(모델 순위 열 포함) + 항목 56 한계·전략은 중립 기준 문구·λ, 퀀트 상세에 그 종목의 성향 순위와 기여(`--profile` 콘솔과 같은 문구). 중립이면 표 없음. 파일 없는 판단일은 안내 + `--cards-only --date` 명령.
+- **실제 데이터 확인 (판단일 2026-10-08)**: `recommend.py --cards-only --date 2026-10-08` → 로그 일치 확인(rank·score·held_buffered) 후 퀀트 카드 50개 재작성 + `profile_ranks.json`(안정형 λ=0.729, 공격형 λ=0.714), 실행 19초. `reports/daily_picks/20261008.csv` md5 실행 전후 동일. `--profile conservative/aggressive --no-save --top-n 50`의 콘솔 순서·λ·최종 점수가 파일과 **50종목 전부 일치**(두 성향). 헤드리스(AppTest, 임시 프로필): 공격형·안정형 → 표 3개 열·종목 줄 표시, 중립 → 표 없음, 10/2(파일 없음) → 안내·명령, 예외 없음.
+- **테스트**: `tests/test_analyst_profile_ranking.py` 8개(중립 = 모델 순서, 성향 순서 = 항목 56 `personalize_scores` 재계산, `apply_profile` 호출은 `ranked_for_profile` 하나뿐·`main`에서 2회, 카드 순위·기여 합, 잘못된 입력 거부, 엄격 JSON·가격 단어 없음, 표준 라이브러리만) + 뷰어 1개. 전체 **520개 통과**.
+- **운용 영향**: 야간 수집 5단계의 중립 `recommend.py`가 이제 매일 `profile_ranks.json`도 씀(성향 λ 보정 2회 추가, 실행 시간 소폭 증가). 페이퍼 로그·퀀트 카드 내용·전략 보유 불변.
+
+93. **실시간 참고 정보: 지수·선택 종목 현재가·최신 뉴스 (2026-10-12, 만들기 전 고정, 재훈 결정: 공시는 실시간 제외) — 모델·순위·카드·페이퍼 로그 변경 없음 (제품 레이어 참고 층, 실험 아님)**
+
+- **목적**: 화면의 시장 카드(10/8 종가)와 실제 지수가 달라 혼동(재훈). 참고 정보 표시는 최신 값을 써도 됨(AGENTS 43.2 "Display may use the latest available value"). 판단일 카드는 그대로 두고 **실시간 참고 영역을 따로** 둠.
+- **고정 조건 (만들기 전)**:
+  1. 범위: KOSPI·KOSPI200 현재 지수(키움 `ka20001` 업종현재가), 선택한 종목 현재가·전일 대비(키움 `ka10001`, 기존 `get_current_quote`), 선택한 종목 최신 뉴스(네이버 검색, 기존 클라이언트·제목 매칭·잡음 규칙 재사용). 환율·금리(일 단위)·공시는 실시간 아님.
+  2. **판단일 대비 수익률을 계산·표시하지 않음** — 현재가와 키움이 주는 전일 대비 등락만. 실시간 함수는 판단일·카드 가격·페이퍼 로그를 입력으로 받지 않음(항목 70 조건 2: forward 구간 성과 비노출).
+  3. 카드 JSON·`reports/`에 저장하지 않음. 실시간 값은 모델·순위·카드 어디에도 들어가지 않음(참고 층, "모델 미사용" 배지).
+  4. 조회 시각(KST)과 장 상태(평일 09:00~15:30 = "장중 · 미확정", 그 외 = "장 운영시간 아님 — 마지막 체결 기준")를 항상 표시.
+  5. 호출: 페이지를 열 때·"새로고침" 때만. 캐시 시세 60초, 뉴스 10분. 토큰은 세션 동안 재사용. 실패 시 화면에는 오류 종류·키움 return_code만(키·토큰·URL 없음), 판단일 카드는 그대로 보임.
+  6. API 코드는 `src/api/`에만(`KiwoomClient.get_index_quote` 추가, 필드명은 `config/kiwoom-rest-api-spec.json` 기준: `cur_prc`, `pred_pre`, `flu_rt`, `inds_cur_prc_tm[0].tm_n`).
+  7. **`ka20001` 값 단위 미확인**: 스펙 예시는 소수(`-2394.49`), 일봉 `ka20006`은 100배 정수. 소수점이 있으면 그대로, 없으면 100배 정수로 해석하고, 판단일 시장 카드 종가와 비율이 0.7~1.3 밖이면 값 대신 "단위 확인 필요" 표시. 앞 부호는 방향 표시라 지수·현재가는 절댓값. IP 등록 후 1회 실측해 이 항목에 기록(2026-10-12 오전 시도는 8050 IP 미등록으로 실패).
+- **구조**: `src/api/kiwoom_client.py`(`get_index_quote`), `src/ui/live_data.py`(Streamlit 없음: 파싱·장 상태·뉴스 거르기·안전한 오류 문구, 클라이언트 주입으로 테스트), `app/panel.py`(실시간 영역·캐시·새로고침).
+- **테스트 계획**: 지수 파싱(소수·100배 정수·부호), 단위 확인, 현재가 부호, 장 상태 경계, 뉴스(제목 매칭·잡음 제외·최신순·중복 제목 제거·개수 제한), 오류 문구에 비밀값 없음, `get_index_quote` 요청 형식(mock), 실시간 모듈이 판단일·페이퍼 로그·가격 파일을 참조하지 않음.
+- **결과 (2026-10-12, 위 설계 그대로 구현)**:
+  - `KiwoomClient.get_index_quote(inds_cd, market_type)`(`ka20001`, raw 반환). `src/ui/live_data.py`: `parse_index_points`(소수 그대로 / 정수 ÷100), `index_row`(수준은 절댓값, 시장 카드 종가 대비 0.7~1.3 밖이면 값 숨김 "단위 확인 필요"), `stock_row`(현재가 절댓값, 전일 대비는 부호 유지), `session_state`, `live_news`(뉴스 카드의 제목 매칭·잡음 규칙 재사용, 같은 제목 1개, 최신순 10개, 1페이지=100건만 조회), `error_text`(오류 종류·return_code만).
+  - `app/panel.py`: 상단 "실시간 지수" 박스(새로고침 버튼, 조회 시각·장 상태·"모델 미사용·판단일 카드와 다른 시점" 문구), 종목 머리에 현재가(전일 대비), 공시·뉴스 상세에 "최신 뉴스 (실시간)" → 기존 카드 뉴스는 "뉴스 (판단일 카드)". 캐시: 시세 60초·뉴스 10분(오류도 같은 시간 캐시 — 토큰 발급 반복 방지), 오류 시 클라이언트 캐시 비움(다음 새로고침에 새 토큰).
+  - **실측에서 발견**: 키움 8050(IP 미등록)은 `return_code`가 아니라 메시지 안에 옴(`return_code`=3) → 메시지에 8050이 있는지만 보고 안내 문구를 냄(메시지 자체는 화면에 안 냄), 회귀 테스트 추가.
+- **확인 (2026-10-12 10:45 KST, 장중)**: 헤드리스(AppTest)로 화면 예외 없음. **네이버 최신 뉴스 정상**(기아: 10:43 기사까지, 제목 매칭·링크·매체 표시, 호출 1회). **키움은 IP 미등록(8050)으로 실측 못 함** — 지수·현재가 영역에 IP 등록 안내가 뜨고 판단일 카드 화면은 그대로 동작.
+- **테스트**: `tests/test_ui_live_data.py` 10개(18 케이스: 지수 파싱 5, 수준·단위 확인, 단위 불일치 숨김, 현재가 부호, 장 상태 경계 6, 뉴스 거르기, 오류 문구에 비밀값 없음·8050 실제 형식, 조회 코드·뉴스 1페이지, 판단일·페이퍼 로그·가격 파일 미참조) + `test_kiwoom_client.py` 1개(`ka20001` 요청 형식). 전체 **539개 통과**.
+- **남은 확인 (IP 등록 후, 재훈 또는 다음 세션)**:
+  1. `ka20001` 실측: `cur_prc` 단위(소수/100배)·부호 → 이 항목에 기록, 필요하면 `parse_index_points` 확정(지금 규칙은 두 경우 모두 처리 + 단위 확인 안전장치).
+  2. **토큰 재발급 동작**: 뷰어와 야간 수집이 각자 토큰을 발급함. 새 발급이 기존 토큰을 무효화하는지 미확인 — 그렇다면 야간 수집 중 뷰어를 열면 수집 일부가 실패할 수 있음(분봉은 다음 밤 최근 10일 재수집으로 복구). 확인 전까지 야간 수집 시간(20:30~수집 종료)에는 뷰어 새로고침을 피함.
+- **`ka20001` 실측 (2026-10-12 11:00 KST, IP 등록 후)**: `cur_prc` = `-6510.54` — **소수 그대로의 지수(100배 정수 아님)**, 앞 부호는 방향(하락). `pred_pre` `-115.39`, `flu_rt` `-1.74`, 시가·고가·저가 6578.17·6589.69·6417.13이 구글 금융 화면의 같은 날 값과 일치. `inds_cur_prc_tm`은 최근 체결 20개(10:57:00~11:00:10). → `parse_index_points`의 소수 경로가 실제 경로, 정수 경로(÷100)와 단위 확인은 안전장치로 유지. 재훈이 본 "구글과 다름"(6,464.95 vs 6,512.34)은 구글 값이 10:37 기준이고 뷰어는 10:57 기준이라 생긴 시점 차이(그 사이 저가 6,417에서 반등).
+- **남은 확인**: 토큰 재발급 동작(위 2번)만.
+- **토큰 재발급 실측 (2026-10-12 11:01 KST)**: 클라이언트 2개가 1초 간격으로 `au10001` 발급 → **같은 토큰**(해시 앞 8자리 일치, 토큰 자체는 출력 안 함), 먼저 받은 클라이언트의 조회도 정상. 유효기간 안의 재발급은 기존 토큰을 그대로 돌려주므로 뷰어와 야간 수집이 서로의 토큰을 무효화하지 않음 → 위 "야간 수집 시간에 새로고침 피함" 주의는 **해제**. 항목 93 미확인 사항 없음.
+- **후속 표시 (2026-10-12, 재훈 결정)**: 같은 화면의 실시간 지수와 판단일 시장 카드가 헷갈리지 않게 `viewer_data.decision_basis(day)` = "판단일 YYYY-MM-DD 종가 기준 · 실시간 아님"을 시장 전문가 박스 제목과 종목별 전문가 박스 안내에 표시("현재가·최신 뉴스만 실시간"). 수급·환율 실시간은 하지 않음(결정 보류). 테스트 +1, 전체 **540개 통과**.
+
+94. **forward2 잠금 + forward 구간 끝 고정 (2026-10-12, 항목 89 11월 작업, 만들기 전 고정, 재훈 결정: forward 끝 고정) — 판정·모델·데이터 변경 없음 (엔지니어링, 실험 아님), forward 미열람**
+
+- **문제**: forward 구간이 끝이 열려 있어(`end=None`) 1월 이후 `select_segment(..., "forward")`는 forward2 날짜까지 읽음. forward2(다음 사이클 최종 확인 구간)는 잠금 자체가 없음.
+- **고정 조건 (만들기 전)**:
+  1. `src/data/intraday_split.py`에 `FORWARD2_START = "2027-01-11"`(dev-end 2027-01-08 다음 거래일, 항목 89 결정 2) 단일 출처. `FORWARD_END` = `FORWARD2_START` 전날(달력일, 2027-01-10)로 **계산** — forward 구간 끝 고정(재훈 결정). 두 구간은 구조적으로 겹치지 않음.
+  2. `forward2` 구간: 시작 `FORWARD2_START`, 끝 열림, 새 잠금 환경변수 `STOCKLENS_CONFIRM_FORWARD2`. **이번 사이클에는 읽는 스크립트 없음** — `select_segment(..., "forward2")` 사용처가 하나라도 생기면 테스트 실패(forward의 항목 54 방식). forward2 평가 스크립트는 다음 사이클에서 사전등록 후 추가.
+  3. forward 평가(`evaluate_forward_holdout.py`): 가격 파일의 마지막 날짜가 `FORWARD2_START` 이상이면 forward를 읽기 **전에** STOP — 평가가 1/9보다 늦어지면 항목 89 규칙대로 `FORWARD2_START`를 먼저 옮기고 기록하라는 메시지(1회 미소진).
+  4. 그리드(`run_next_cycle_grid.py`): `--dev-end`가 `FORWARD2_START` 이상이면 데이터 없이 STOP.
+  5. **1/9 결과 불변**: 데이터가 1/8까지면 forward 끝 고정 전(열림)과 후의 선택 행이 같음 — 테스트로 확인(같은 입력에 두 정의를 적용해 비교). min 60일 관문 그대로.
+  6. 분봉 raw 허용 목록(`test_forward_access_guard.py`): 지금 목록의 스크립트 중 forward2 날짜를 읽을 수 있는 것은 평가(위 3번 관문)·커버리지 점검(개수만)·수집기·품질 점검뿐 — 이유 문구에 forward2 반영.
+- **테스트 계획**: 상수 관계(끝 = 시작 전날, forward2 시작 > forward 시작), forward2 잠금(환경변수 없으면 거부, forward 잠금 해제로 안 풀림), 구간 비겹침, 끝 고정 전후 동일(데이터 1/8까지), forward2 사용처 0개, 평가·그리드 관문.
+- **결과 (2026-10-12, 위 설계 그대로 구현)**:
+  - `src/data/intraday_split.py`: `FORWARD2_START = "2027-01-11"`, `FORWARD_END`(= 그 전날 2027-01-10, 계산), `forward` 구간 끝 = `FORWARD_END`, `forward2` 구간(끝 열림, `FORWARD2_ENV_VAR = "STOCKLENS_CONFIRM_FORWARD2"`). 독스트링 구간표 갱신.
+  - `evaluate_forward_holdout.py`: `forward2_reached(calendar)` — 재실행 관문 다음, 데이터·모델 로딩 **전에** 가격 파일 마지막 날짜 ≥ `FORWARD2_START`면 STOP("상수를 먼저 옮기고 기록, forward 미열람"). 같은 달력을 `select_segment`에 그대로 넘김(조회 1회).
+  - `run_next_cycle_grid.py` `gate`: `--dev-end ≥ FORWARD2_START` → 코드 2 STOP(데이터 미열람).
+  - 분봉 raw 허용 목록 사유 문구에 forward2 반영(목록 자체 변화 없음).
+- **테스트**: +9 — `test_intraday_split.py` 5(상수 관계, forward2 잠금·다른 잠금 해제로 안 열림·forward2 해제로 forward 안 열림, 두 구간 행 비겹침, **끝 고정 전후 선택 행 동일**(데이터 1/8까지·12/30까지, 달력 유무 각각), 기존 "열린 구간 달력" 테스트는 forward2로 이동), `test_run_ml_backtest_config.py` 1(`scripts/`·`src/`·`app/`에 forward2 사용처 0개), `test_evaluate_forward_holdout.py` 2(관문 경계, 늦은 실행은 로딩 함수를 하나도 부르지 않고 STOP), `test_next_cycle_grid.py` 1(`--dev-end` forward2 경계). 전체 **549개 통과**.
+- **항목 89 11월 체크 (이 작업 뒤)**: 리허설 `REHEARSAL PASSED`(234초), 지문 `f397507a…f5f6 -> MATCH`, item 45 교차 확인 `+65.0% / −2.2% -> MATCH`. `reports/forward_holdout/` 없음(forward 미열람 확인).

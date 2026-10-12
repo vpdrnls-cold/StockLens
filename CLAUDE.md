@@ -31,6 +31,7 @@ Kiwoom REST API 기반 한국 주식 **분석·추천** 시스템. 최종 목표
 buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --profile`).
 최신 상태와 다음 과제는 `CURRENT_STATUS.md`의 마지막 항목을 본다. 감사(2026-10-04) 후속 체크리스트는 항목 65.
 실험 백로그(forward 평가 전·후로 할 실험과 준비 작업, 각각 실행 전 사전등록)는 `CURRENT_STATUS.md` 항목 78.
+1월 1회 실행 순서표(코드 동결 2026-12-01, forward 평가 2027-01-09, 그리드 `--dev-end 2027-01-08`)는 항목 89.
 시간 holdout(forward)과 종목 holdout(추가 종목·코스닥)은 서로 대체하지 않는다.
 수집 유니버스는 KOSPI200 전체(`kospi200`, 항목 68)지만 평가·운용은 top50 — 추가 종목 데이터는 이번 사이클에서 쓰지 않는다.
 
@@ -47,6 +48,7 @@ buffer 3.0. 설문(`scripts/survey.py`) → 프로필 재랭킹(`recommend.py --
   `tests/test_forward_access_guard.py` allowlist에 있어야 한다. 날짜로 자르지 않으면 forward까지 읽으므로,
   forward를 읽지 않는다는 것(날짜 상한 등)을 확인한 뒤에만 allowlist에 추가한다(항목 65). forward 결과 단독으로 운용 경로를 바꾸지 않는다(forward2 확인 필요).
   유일한 예외: forward 평가 **후** 다음 사이클 dev로 읽는 `scripts/run_next_cycle_grid.py`(항목 84·85) — 평가 결과 파일이 없으면 스스로 멈춘다.
+- **forward2(2027-01-11~, `FORWARD2_START`)는 다음 사이클의 최종 확인 구간이다.** 이번 사이클에는 읽는 스크립트가 없고(`select_segment(..., "forward2")` 사용처가 생기면 테스트 실패), forward 구간은 그 전날에서 끝난다(항목 94).
 - daily test split(2023-07-01~2026-09-16)은 항목 41에서 이미 소진됨.
   test를 읽는 코드는 반드시 `src/eval/test_lock.confirm_final_test_use()`를 먼저 호출.
 - 잠금 환경변수(`STOCKLENS_CONFIRM_FINAL_TEST`, `STOCKLENS_CONFIRM_INTRADAY_FORWARD`,
@@ -118,7 +120,7 @@ STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/check_forward_min
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m venv .venv-ui && .venv-ui/bin/pip install -r requirements-ui.txt   # 최초 1회
 .venv-ui/bin/streamlit run app/viewer.py
 
-# 설문 → 추천
+# 설문 → 추천 (웹: 뷰어의 '투자성향 진단' 페이지, 항목 91 / CLI: 아래)
 PYTHONPATH=. .venv/bin/python scripts/survey.py
 STOCKLENS_UNIVERSE=top50 PYTHONPATH=. .venv/bin/python scripts/recommend.py --profile saved
 ```

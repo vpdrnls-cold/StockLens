@@ -68014,5 +68014,44 @@
     "previous_close_change": -1000,
     "previous_close_change_sign": 5,
     "turnover_rate": "0.14"
+  },
+  {
+    "stock_code": "068270",
+    "trade_date": "2026-10-06",
+    "open_price": 185200,
+    "high_price": 186800,
+    "low_price": 181100,
+    "close_price": 182400,
+    "volume": 346310,
+    "trade_value_million_krw": 63539,
+    "previous_close_change": -200,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.15"
+  },
+  {
+    "stock_code": "068270",
+    "trade_date": "2026-10-07",
+    "open_price": 182800,
+    "high_price": 184000,
+    "low_price": 181200,
+    "close_price": 182600,
+    "volume": 254258,
+    "trade_value_million_krw": 46577,
+    "previous_close_change": 200,
+    "previous_close_change_sign": 2,
+    "turnover_rate": "0.11"
+  },
+  {
+    "stock_code": "068270",
+    "trade_date": "2026-10-08",
+    "open_price": 182000,
+    "high_price": 182300,
+    "low_price": 178900,
+    "close_price": 179000,
+    "volume": 461849,
+    "trade_value_million_krw": 83365,
+    "previous_close_change": -4500,
+    "previous_close_change_sign": 5,
+    "turnover_rate": "0.20"
   }
 ]

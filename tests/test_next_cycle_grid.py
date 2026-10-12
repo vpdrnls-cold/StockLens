@@ -199,6 +199,16 @@ def test_gate_stops(tmp_path) -> None:
     assert rg.gate(out, "2026-09-24", TOP50, TOP50, missing)[0] == 3                # runs once
 
 
+def test_gate_stops_at_forward2(tmp_path, monkeypatch) -> None:
+    # Item 94: --dev-end may not reach forward2. Moved into the past so "future" does not fire first.
+    monkeypatch.setattr(rg, "FORWARD2_START", "2026-10-01")
+    done = tmp_path / "forward_results.csv"
+    done.write_text("x")
+    assert rg.gate(tmp_path / "grid", "2026-09-30", TOP50, TOP50, done) is None
+    code, msg = rg.gate(tmp_path / "grid", "2026-10-01", TOP50, TOP50, done)
+    assert code == 2 and "forward2" in msg
+
+
 # --- item 86 data cleaning (D1~D4 = a) ------------------------------------------
 
 from datetime import date, timedelta  # noqa: E402

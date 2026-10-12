@@ -505,6 +505,30 @@ class KiwoomClient:
         merged_response["stk_min_pole_chart_qry"] = all_rows
         return merged_response
 
+    def get_index_quote(self, inds_cd: str = "001", *, market_type: str = "0") -> Mapping[str, Any]:
+        """Return the raw ``ka20001`` (업종현재가) response for one index (item 93).
+
+        ``mrkt_tp``/``inds_cd`` as in ``config/kiwoom-rest-api-spec.json``
+        (KOSPI ``"0"``/``"001"``, KOSPI200 ``"0"``/``"201"``). Raw on purpose:
+        the unit of ``cur_prc`` is interpreted by ``src/ui/live_data.py``.
+        """
+        token = self.authenticate()
+        headers = self._json_headers(
+            **{
+                "api-id": "ka20001",
+                "authorization": f"Bearer {token.value}",
+                "cont-yn": "N",
+                "next-key": "",
+            }
+        )
+        response, _headers = self._post(
+            self._SECTOR_PATH,
+            {"mrkt_tp": market_type, "inds_cd": inds_cd},
+            headers,
+            stage="index_quote",
+        )
+        return response
+
     def get_index_constituents(
         self,
         inds_cd: str = "201",
