@@ -79,3 +79,18 @@ def test_saved_result_is_what_the_viewer_reads(tmp_path, monkeypatch):
 def test_no_streamlit_import():
     src = (ROOT / "src/ui/survey_form.py").read_text(encoding="utf-8")
     assert "streamlit" not in src.split('"""', 2)[2]
+
+
+def test_explain_markdown_bullets_only_the_reasons():
+    # Item 95: "이유:" was rendered as a bullet at the same level as the reasons.
+    result = sf.score_form(S(2, 1, 1, 1, 4, 4), None)
+    md = sf.explain_markdown(sv.explain(result))
+    bullets = [line for line in md.splitlines() if line.startswith("- ")]
+    assert bullets == [f"- {r}" for r in result.reasons]
+    assert "- 이유:" not in md and "이유:" in md
+    assert sv.NO_LOSS_CONFLICT_TEXT in md and f"- {sv.NO_LOSS_CONFLICT_TEXT}" not in md
+    assert "진단 결과" not in md  # the headline is shown separately
+    eligible = sf.score_form(S(4, 4, 4, 3, 4, 4), None)
+    lines = sv.explain(eligible).splitlines()
+    assert [line for line in sf.explain_markdown(sv.explain(eligible)).splitlines() if line.strip()] == \
+        [f"- {line[4:]}" for line in lines[1:]]

@@ -10,7 +10,7 @@
 #
 # What it does (after 20:00 KST, when the after-market session has closed):
 #   1. minute bars (ka10080, 15-min) for the top50 universe, last 10 days
-#   2. daily bars (ka10081) for the top50 universe -- FRIDAYS ONLY by default
+#   2. daily bars (ka10081) for the collection universe -- every night (item 96)
 #   2b. right after 2: adjusted-price change monitor (item 82) -- compares past bars
 #      with the last snapshot and logs recalculations; exit 4 = change logged, not a failure
 #   3. index bars (ka20006: KOSPI, KOSPI200) + investor flows (ka10059) for
@@ -21,18 +21,21 @@
 #   3d. news headlines for top50, newest 1,000 per stock (item 75, ~500 requests) --
 #       past headlines cannot be fetched later, so this one must run every night
 #   4. optional: mirror data/raw/kiwoom/ka10080 to $STOCKLENS_RAW_BACKUP_DIR
-#   5. whenever daily bars were refreshed (Fridays by default): write the
-#      paper-trading pick log reports/daily_picks/<date>.csv (scripts/recommend.py)
-#      + quant cards (item 69), chart cards (item 70) and disclosure cards (item 72), the market card (item 74) and news cards (item 75) in
-#      reports/analyst_cards/<date>/ -- read by the viewer app/viewer.py
+#   5. whenever daily bars were refreshed: quant cards (item 69), chart cards (item 70),
+#      disclosure cards (item 72), the market card (item 74) and news cards (item 75) in
+#      reports/analyst_cards/<date>/ -- read by the viewer app/viewer.py.
+#      FRIDAYS ONLY (or STOCKLENS_NIGHTLY_DAILY=1): the quant cards come from the
+#      paper-trading pick log run, reports/daily_picks/<date>.csv (scripts/recommend.py).
+#      Other nights: recommend.py --cards-only (item 71) -- cards, never the log.
 #
-# Why daily bars are not fetched every night:
+# Modes (item 96):
+#   unset, Friday       -> daily bars + paper log + cards (the weekly paper log, item 66:
+#                          an extra mid-week log would change the replayed holdings)
+#   unset, other nights -> daily bars + cards only (viewer shows the latest close)
+#   STOCKLENS_NIGHTLY_DAILY=1 -> Friday mode on any day (e.g. after a holiday Friday)
+#   STOCKLENS_NIGHTLY_DAILY=0 -> no daily bars, no cards (minute bars etc. only)
 #   ka10081 is requested with adjusted prices (upd_stkpc_tp=1), so every call
-#   re-downloads each stock's WHOLE history (up to 60 pages per stock) -- an
-#   incremental fetch would break adjustment consistency after a split or
-#   rights issue. That takes many minutes for 50 stocks. Daily bars are also
-#   re-fetchable at any time, unlike minute bars, so once a week is enough.
-#   Force it on any day with STOCKLENS_NIGHTLY_DAILY=1, skip it with =0.
+#   re-downloads each stock's WHOLE history -- about 7 minutes for 200 stocks.
 #
 # Universes (item 68):
 #   collection (steps 1-3) = STOCKLENS_COLLECT_UNIVERSE, default kospi200 (all 200
@@ -66,14 +69,20 @@ esac
 status=0
 {
   echo "=== $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST') nightly ingest start ==="
+  # item 99 (audit P0-1): Kiwoom 8050 = this IP is not registered -> record which IP the night run used
+  echo "public IP: $(curl -s --max-time 5 https://api.ipify.org || echo unknown)"
 
   echo "--- [1/5] minute bars (ka10080) ---"
   echo "collection universe: $COLLECT ($COLLECT_FILE)"
   "$PYTHON" scripts/ingest_kiwoom_minute_chart_universe.py --universe "$COLLECT_FILE" --lookback-days 10 || status=1
 
-  daily="${STOCKLENS_NIGHTLY_DAILY:-}"
-  if [[ -z "$daily" ]]; then
-    [[ "$(TZ=Asia/Seoul date +%u)" == "5" ]] && daily=1 || daily=0
+  # item 96: daily bars every night; the paper log stays weekly (Fridays)
+  paper="${STOCKLENS_NIGHTLY_DAILY:-}"
+  if [[ -z "$paper" ]]; then
+    [[ "$(TZ=Asia/Seoul date +%u)" == "5" ]] && paper=1 || paper=0
+    daily=1
+  else
+    daily="$paper"
   fi
   if [[ "$daily" == "1" ]]; then
     echo "--- [2/5] daily bars (ka10081, full adjusted history) ---"
@@ -88,7 +97,7 @@ status=0
       status=1
     fi
   else
-    echo "--- [2/5] daily bars skipped (Fridays only; STOCKLENS_NIGHTLY_DAILY=1 to force) ---"
+    echo "--- [2/5] daily bars skipped (STOCKLENS_NIGHTLY_DAILY=0) ---"
   fi
 
   echo "--- [3/5] index bars + investor flows (ka20006/ka10059, last 10 days) ---"
@@ -116,14 +125,20 @@ status=0
   fi
 
   if [[ "$daily" == "1" ]]; then
-    echo "--- [5/5] recommendation log (scripts/recommend.py) ---"
-    "$PYTHON" scripts/recommend.py
-    rc=$?
-    if [[ $rc -eq 3 ]]; then
-      # item 71: the paper log for this decision date already exists -> not a failure
-      echo "recommend: skipped (log exists)"
-    elif [[ $rc -ne 0 ]]; then
-      status=1
+    if [[ "$paper" == "1" ]]; then
+      echo "--- [5/5] recommendation log (scripts/recommend.py) ---"
+      "$PYTHON" scripts/recommend.py
+      rc=$?
+      if [[ $rc -eq 3 ]]; then
+        # item 71: the paper log for this decision date already exists -> not a failure
+        echo "recommend: skipped (log exists)"
+      elif [[ $rc -ne 0 ]]; then
+        status=1
+      fi
+    else
+      echo "--- [5/5] viewer cards only (recommend.py --cards-only, no paper log; item 96) ---"
+      # item 71: exit 4 = recomputed ranking differs from an existing log -> no card, a failure
+      "$PYTHON" scripts/recommend.py --cards-only || status=1
     fi
     # item 70: chart cards for every ranked stock, next to the quant cards recommend.py just wrote
     "$PYTHON" scripts/chart_card.py --from-picks 50 > /dev/null || status=1

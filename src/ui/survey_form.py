@@ -45,6 +45,18 @@ def form_problem(selections: dict[str, int | None], ack_choice: str | None) -> s
     return None
 
 
+def explain_markdown(explanation: str) -> str:
+    """``survey.explain`` text minus its headline, for st.markdown (item 95):
+    only the indented "  - " lines become bullets; the rest stay paragraphs."""
+    blocks = []
+    for line in explanation.splitlines()[1:]:
+        if line.startswith("  - "):
+            blocks.append(f"- {line[4:]}")
+        else:
+            blocks.append(f"\n{line}\n")
+    return "\n".join(blocks)
+
+
 def score_form(selections: dict[str, int | None], ack_choice: str | None) -> SurveyResult:
     """Same result as ``scripts/survey.py`` for the same answers. Call only when form_problem() is None."""
     problem = form_problem(selections, ack_choice)

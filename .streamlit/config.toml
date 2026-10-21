@@ -1,0 +1,8 @@
+# 로컬 뷰어 개발용 설정 (app/viewer.py). 코드 저장 시 자동 재실행.
+[server]
+runOnSave = true          # 파일 저장하면 열려 있는 세션이 자동으로 다시 실행됨
+headless = true           # 서버 시작 때 브라우저를 새로 열지 않음
+folderWatchList = ["src"] # app/ 밖의 src/ 모듈 변경도 감시 (Streamlit이 이 키를 지원할 때)
+
+[runner]
+fastReruns = true

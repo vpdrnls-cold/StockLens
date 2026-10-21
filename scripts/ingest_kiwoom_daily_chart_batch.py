@@ -1,4 +1,9 @@
-"""Sequentially ingest and store ka10081 daily charts for multiple symbols."""
+"""Sequentially ingest and store ka10081 daily charts for multiple symbols.
+
+Time guard (item 98): ka10081 bars carry no completeness flag, so on a weekday before
+FETCH_FINAL_TIME_KST (20:00, item 99) the run stops (exit 2) instead of storing today's in-progress
+bar (items 62/97). --force overrides it (e.g. on a weekday holiday).
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.api import KiwoomClient, KiwoomTokenError
 from src.data.ingest import ingest_kiwoom_daily_chart_batch
+from src.data.normalization import KST
+from src.data.session import daily_fetch_error
 from src.data.universe import get_universe
 from src.utils.config import ConfigurationError
 
@@ -34,10 +41,21 @@ def main() -> int:
     )
     parser.add_argument(
         "--base-date",
-        default=datetime.now().strftime("%Y%m%d"),
-        help="Chart base date in YYYYMMDD format; defaults to today.",
+        default=datetime.now(KST).strftime("%Y%m%d"),
+        help="Chart base date in YYYYMMDD format; defaults to today (KST).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run before the session-final time anyway (today's bar is stored unfinished).",
     )
     arguments = parser.parse_args()
+
+    base_date = datetime.strptime(arguments.base_date, "%Y%m%d").date()
+    guard = daily_fetch_error(base_date, datetime.now(KST))
+    if guard and not arguments.force:
+        print(guard, file=sys.stderr)
+        return 2
 
     try:
         client = KiwoomClient.from_env()

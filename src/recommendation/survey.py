@@ -105,6 +105,11 @@ WARNING_TEXT = (
     f"최대 낙폭이 {CONSERVATIVE_MDD_RANGE}였습니다. 선택하신 수준을 넘는 손실이 생길 수 있습니다. "
     "그래도 진행하시겠습니까?"
 )
+NO_LOSS_CONFLICT_MIN_GOAL = 2  # Q5 score of "시장 평균 수준의 수익"
+NO_LOSS_CONFLICT_TEXT = (
+    "Q5에서 시장 평균 이상의 수익을 목표로 고르셨는데, 그런 수익을 노리는 주식 전략은 "
+    "원금 손실 가능성을 함께 가집니다."
+)
 PROFILE_LABELS = {"conservative": "안정형", "neutral": "중립형", "aggressive": "공격형"}
 PROFILE_MEANING = {
     "conservative": "변동성이 작은 종목 쪽으로 기울인 순위입니다. 수익 변동은 줄지만 손실이 작다는 보장은 없습니다.",
@@ -191,11 +196,22 @@ def evaluate(answers: dict[str, int], warning_acknowledged: bool | None = None, 
     return SurveyResult(True, profile, capacity, tolerance, s, binding, reasons=why, **base)
 
 
+def goal_conflicts_with_no_loss(answers: dict[str, int]) -> bool:
+    """Q3 'cannot accept any loss' together with a Q5 goal of market-level return or more (item 95)."""
+    if not answers:
+        return False
+    q3, q5 = QUESTION_BY_KEY["Q3"], QUESTION_BY_KEY["Q5"]
+    return (q3.options[answers["Q3"]][1] is NOT_ELIGIBLE
+            and q5.options[answers["Q5"]][1] >= NO_LOSS_CONFLICT_MIN_GOAL)
+
+
 def explain(result: SurveyResult) -> str:
     if not result.eligible:
         lines = ["진단 결과: 현재 응답 기준으로는 이 서비스의 모델 참고 순위를 제공하지 않습니다.", "이유:"]
         lines += [f"  - {r}" for r in result.reasons]
         lines.append("단기 주식 전략은 짧은 기간에 큰 손실이 날 수 있어, 위 조건에서는 적합하지 않습니다.")
+        if goal_conflicts_with_no_loss(result.answers):
+            lines.append(NO_LOSS_CONFLICT_TEXT)
         return "\n".join(lines)
     side = {"capacity": "손실 감당 여력", "tolerance": "위험 성향", "equal": "여력·성향(동일)"}[result.binding]
     lines = [

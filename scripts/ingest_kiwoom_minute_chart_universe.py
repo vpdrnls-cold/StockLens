@@ -40,11 +40,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.api import KiwoomClient, KiwoomClientError, KiwoomTokenError
 from src.data.ingest import ingest_kiwoom_minute_chart_raw
+from src.data.session import FETCH_FINAL_TIME_KST
 from src.data.storage import HistoricalStorageError
 from src.utils.config import ConfigurationError
 
 KST = timezone(timedelta(hours=9))
-DAY_CLOSE_HOUR_KST = 20  # 애프터마켓 종료 → 당일 봉 확정 시각
+DAY_CLOSE_HOUR_KST = FETCH_FINAL_TIME_KST.hour  # 애프터마켓 종료 → 당일 봉 확정 시각 (일봉 수집과 같은 출처, 항목 99)
 DEFAULT_UNIVERSE = PROJECT_ROOT / "config" / "universe_kospi200_top50.json"
 RAW_DIR = PROJECT_ROOT / "data" / "raw" / "kiwoom" / "ka10080"
 # KRX short codes: 6 digits, or 6 upper-case alphanumerics for newer listings (e.g. 0126Z0, item 68)

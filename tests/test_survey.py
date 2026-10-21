@@ -89,3 +89,19 @@ def test_explain_mentions_numbers_and_limits():
     text = sv.explain(sv.evaluate(A(4, 4, 3, 2, 2, 4)))
     assert "안정형" in text and "손실이 작다는 보장은 없습니다" in text
     assert "모델 참고 순위를 제공하지 않습니다" in sv.explain(sv.evaluate(A(1, 4, 5, 4, 4, 4)))
+
+
+@pytest.mark.parametrize("answers, conflict", [
+    (A(2, 1, 1, 1, 4, 4), True),    # W1 case (item 95): no loss + "beat the market"
+    (A(4, 4, 1, 3, 3, 4), True),    # no loss + market-level goal
+    (A(4, 4, 1, 3, 2, 4), False),   # no loss + modest goal: consistent
+    (A(4, 1, 3, 3, 4, 4), False),   # not eligible for Q2 only
+    (A(4, 4, 4, 3, 4, 4), False),   # eligible
+])
+def test_no_loss_goal_conflict_note_is_wording_only(answers, conflict):
+    result = sv.evaluate(answers)
+    assert (sv.NO_LOSS_CONFLICT_TEXT in sv.explain(result)) is conflict
+    # Wording only: the verdict and its reasons do not mention Q5, the version is unchanged (item 95).
+    assert sv.SURVEY_VERSION == "2026-09-30"
+    if conflict:
+        assert not result.eligible and all("Q5" not in r for r in result.reasons)

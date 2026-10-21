@@ -46,12 +46,13 @@ if st.button("진단하기", type="primary"):
     else:
         result = sf.score_form(selections, ack_choice)
         sv.save(result, PROFILE_PATH)
-        lines = sv.explain(result).splitlines()
+        explanation = sv.explain(result)
+        headline = explanation.splitlines()[0]
         if result.eligible:
-            st.success(lines[0])
+            st.success(headline)
         else:
-            st.error(lines[0])
-        st.markdown("\n".join(f"- {line.strip().lstrip('- ')}" for line in lines[1:]))
+            st.error(headline)
+        st.markdown(sf.explain_markdown(explanation))
         st.caption("저장했습니다 (data/user_profile.json, git에 올라가지 않음).")
-        if result.eligible:
-            st.page_link("panel.py", label="분석가 패널에서 보기", icon="📊")
+        st.page_link("panel.py", label="분석가 패널에서 보기" if result.eligible else "참고 정보만 보기",
+                     icon="📊")

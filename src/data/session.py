@@ -9,7 +9,7 @@ close, so a bar dated today is usable only after ``SESSION_FINAL_TIME_KST``
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from src.data.normalization import KST, SESSION_FINAL_TIME_KST
 
@@ -29,3 +29,29 @@ def intraday_bar_error(decision_date: date, now: datetime) -> str | None:
             "--date 로 이전 판단일을 지정하세요."
         )
     return None
+
+
+# Item 99 (audit D-6): SESSION_FINAL_TIME_KST (18:00) was never measured (item 64) and the
+# NXT after-market runs until 20:00, so FETCHING stays on the after-market close until
+# item 64 settles it. Same cut-off as the minute-bar script.
+FETCH_FINAL_TIME_KST = time(20, 0)
+
+
+def daily_fetch_error(base_date: date, now: datetime) -> str | None:
+    """Message if fetching ka10081 up to ``base_date`` at ``now`` would store today's
+    unfinished bar (item 98), else None.
+
+    Cut-off ``FETCH_FINAL_TIME_KST`` (item 99). Kiwoom returns bars up to today even for a
+    later base date, so only an earlier base date is safe before the cut-off. Weekends
+    have no session; a weekday holiday is still refused (use --force).
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware.")
+    local = now.astimezone(KST)
+    if base_date < local.date() or local.weekday() >= 5 or local.time() >= FETCH_FINAL_TIME_KST:
+        return None
+    return (
+        f"지금은 {local:%H:%M} KST 입니다. 일봉(ka10081)에는 확정 표시가 없어 {FETCH_FINAL_TIME_KST:%H:%M} 이전에 받으면 "
+        f"오늘({local.date()}) 봉이 미확정 값으로 저장됩니다(항목 62·97·99). {FETCH_FINAL_TIME_KST:%H:%M} 이후에 다시 실행하거나, "
+        "오늘이 휴장일이거나 알고 있다면 --force 를 붙이세요."
+    )

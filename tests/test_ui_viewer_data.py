@@ -71,6 +71,25 @@ def test_box_order_quant_first_profile_only_reorders_reference_boxes() -> None:
     assert {vd.box_layer(k) for k in (*vd.STOCK_REFERENCE_BOXES, *vd.PAGE_BOXES)} == {"reference"}
 
 
+
+def test_not_eligible_hides_the_ranking_layer_only() -> None:
+    # Item 95: reference boxes stay (neutral order), the quant box goes.
+    assert vd.box_order("aggressive", eligible=False) == list(vd.STOCK_REFERENCE_BOXES)
+    assert vd.box_order(None, eligible=False) == list(vd.STOCK_REFERENCE_BOXES)
+    assert "quant" not in vd.box_order("conservative", eligible=False)
+    assert vd.box_order("aggressive") == vd.box_order("aggressive", eligible=True)
+    assert "추천" not in vd.NOT_ELIGIBLE_NOTICE and "참고 정보" in vd.NOT_ELIGIBLE_NOTICE
+
+
+def test_reference_stock_rows_carry_no_ranking(tmp_path) -> None:
+    _write_day(tmp_path, [_quant("000300", 1, True, "new"), _quant("000100", 2, False), _quant("000200", 3, True, "kept")])
+    rows = vd.ranking_rows(vd.load_day("20261006", tmp_path))
+    picked = vd.reference_stock_rows(rows)
+    assert [r["stock_code"] for r in picked] == ["000100", "000200", "000300"]  # code order, not rank order
+    assert all(set(r) == {"stock_code", "name"} for r in picked)
+    assert rows[0]["stock_code"] == "000300"  # input untouched
+
+
 def _chart_card(verdicts: list[str | None]) -> dict:
     return {"card": "chart", "states": [
         {"state": f"s{i}", "title": f"상태이름{i}", "value": 1.0, "bucket": "b",
@@ -288,3 +307,65 @@ def test_profile_ranks_are_read_as_stored(tmp_path) -> None:
 def test_decision_basis_label() -> None:
     # Item 93 follow-up: card boxes say they are the decision date's close, not live values.
     assert vd.decision_basis("20261008") == "판단일 2026-10-08 종가 기준 · 실시간 아님"
+
+
+def test_date_label_shows_weekday_for_the_date_picker() -> None:
+    assert vd.date_label("20261013") == "2026-10-13 (화)"
+    assert vd.date_label("20261002") == "2026-10-02 (금)"
+
+
+def test_one_broken_card_does_not_stop_the_day(tmp_path: Path) -> None:
+    # Item 99 (UI-P0-2): the broken file is treated as missing and reported by name.
+    day = tmp_path / "20261013"
+    day.mkdir()
+    (day / "005930_quant.json").write_text('{"ok": 1}', encoding="utf-8")
+    (day / "005930_chart.json").write_text('{"broken": ', encoding="utf-8")
+    (day / "market.json").write_bytes(b"\xff\xfe")
+    cards = vd.load_day("20261013", tmp_path)
+    assert cards["005930"]["quant"] == {"ok": 1} and cards["005930"]["chart"] is None
+    assert vd.load_market("20261013", tmp_path) is None
+    assert vd.load_profile_ranks("20261013", tmp_path) is None  # missing file
+    broken = vd.unreadable_files(sorted(day.glob("*.json")))
+    assert broken == ["20261013/005930_chart.json (JSONDecodeError)", "20261013/market.json (UnicodeDecodeError)"]
+
+
+def test_broken_profile_counts_as_no_survey(tmp_path: Path) -> None:
+    path = tmp_path / "user_profile.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert vd.load_profile(path) is None
+    assert vd.unreadable_files([path, tmp_path / "missing.json"]) == [f"{tmp_path.name}/user_profile.json (JSONDecodeError)"]
+
+
+def _rank_rows(scores: list[float]) -> list[dict]:
+    return [{"stock_code": f"{k:06d}", "rank": k, "score": s} for k, s in enumerate(scores, 1)]
+
+
+def test_tie_ranges_group_equal_scores_and_leave_input_unchanged() -> None:
+    # Item 100 (UI-P1-2): display only; ranks are the cards' own values.
+    rows = _rank_rows([0.5, 0.3, 0.3, 0.3 + 1e-12, 0.1])
+    before = [dict(r) for r in rows]
+    ties = vd.tie_ranges(rows)
+    assert ties == {"000001": (1, 1), "000002": (2, 4), "000003": (2, 4), "000004": (2, 4), "000005": (5, 5)}
+    assert rows == before
+
+
+def test_rank_text_and_label() -> None:
+    assert vd.rank_text(3, (3, 3)) == "3위" and vd.rank_text(3, None) == "3위"
+    assert vd.rank_text(3, (2, 8)) == "공동 2–8위"
+    assert vd.rank_label(3, (2, 8)) == "공동 2–8위 · 표시순 3"
+    assert vd.rank_label(1, (1, 1)) == "1위"
+
+
+def test_quant_summary_shows_shared_rank_range() -> None:
+    card = {"ranking": {"rank": 3, "n_stocks": 50, "percentile": 0.96},
+            "strategy": {"held_buffered": True, "status": "신규"}}
+    assert vd.quant_summary(card) == "순위 3 / 50 · 백분위 96% · 전략 보유(신규)"
+    assert vd.quant_summary(card, (2, 8)) == "공동 2–8위 · 표시순 3 / 50 · 백분위 96% · 전략 보유(신규)"
+
+
+def test_profile_mismatch_notice() -> None:
+    saved = {"profile": "conservative", "eligible": True}
+    assert vd.profile_mismatch_notice(saved, "conservative") is None
+    assert vd.profile_mismatch_notice(saved, "aggressive").startswith("설문 결과(안정형)와 다른 성향")
+    assert vd.profile_mismatch_notice(None, "aggressive") is None
+    assert vd.profile_mismatch_notice({"profile": None, "eligible": False}, None) is None

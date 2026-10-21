@@ -12,6 +12,7 @@ No Streamlit import, so this module is tested in the main environment;
 
 from __future__ import annotations
 
+from datetime import date
 import json
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,32 @@ VERDICT_LABELS = {
 }
 
 
+READ_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError)  # item 99 (UI-P0-2)
+
+
+def read_json(path: Path) -> Any | None:
+    """Parsed JSON, or None if the file is missing or unreadable -- one broken card must
+    not stop the whole page (item 99). ``unreadable_files`` reports which ones failed."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except READ_ERRORS:
+        return None
+
+
+def unreadable_files(paths: list[Path]) -> list[str]:
+    """Names of existing files that cannot be read or parsed as JSON, for the page warning."""
+    broken = []
+    for path in paths:
+        path = Path(path)
+        if not path.exists():
+            continue
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except READ_ERRORS as error:
+            broken.append(f"{path.parent.name}/{path.name} ({type(error).__name__})")
+    return broken
+
+
 def available_dates(root: Path = CARDS_ROOT) -> list[str]:
     """Decision dates (YYYYMMDD) that have quant cards, newest first."""
     root = Path(root)
@@ -59,6 +86,15 @@ def available_dates(root: Path = CARDS_ROOT) -> list[str]:
         return []
     days = [d.name for d in root.iterdir() if d.is_dir() and any(d.glob("*_quant.json"))]
     return sorted(days, reverse=True)
+
+
+WEEKDAY_LABELS = ("월", "화", "수", "목", "금", "토", "일")
+
+
+def date_label(day: str) -> str:
+    """'20261013' -> '2026-10-13 (화)' for the decision-date picker (item 97)."""
+    weekday = WEEKDAY_LABELS[date(int(day[:4]), int(day[4:6]), int(day[6:])).weekday()]
+    return f"{day[:4]}-{day[4:6]}-{day[6:]} ({weekday})"
 
 
 def load_day(day: str, root: Path = CARDS_ROOT) -> dict[str, dict[str, Any]]:
@@ -69,7 +105,10 @@ def load_day(day: str, root: Path = CARDS_ROOT) -> dict[str, dict[str, Any]]:
         code, kind = path.stem.rsplit("_", 1)
         if kind not in CARD_KINDS:
             continue
-        cards.setdefault(code, dict.fromkeys(CARD_KINDS))[kind] = json.loads(path.read_text(encoding="utf-8"))
+        card = read_json(path)
+        if card is None:  # item 99: shown as missing, listed by unreadable_files
+            continue
+        cards.setdefault(code, dict.fromkeys(CARD_KINDS))[kind] = card
     return cards
 
 
@@ -88,6 +127,34 @@ def ranking_rows(day_cards: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             "has_disclosure": c.get("disclosure") is not None, "has_news": c.get("news") is not None,
         })
     return sorted(rows, key=lambda x: x["rank"])
+
+
+TIE_SCORE_DIGITS = 9  # same rounding as recommend.rank_like_engine
+
+
+def tie_ranges(rows: list[dict[str, Any]]) -> dict[str, tuple[int, int]]:
+    """``{stock_code: (first_rank, last_rank)}`` of the group sharing its score (item 100).
+    Display only: the ranks themselves (ties by stock code) are the cards' own values."""
+    def score_key(row: dict[str, Any]) -> float:
+        return round(float(row["score"]), TIE_SCORE_DIGITS)
+
+    groups: dict[float, list[int]] = {}
+    for r in rows:
+        groups.setdefault(score_key(r), []).append(int(r["rank"]))
+    return {r["stock_code"]: (min(groups[score_key(r)]), max(groups[score_key(r)])) for r in rows}
+
+
+def rank_text(rank: int, tie: tuple[int, int] | None) -> str:
+    """'3위', or '공동 2–8위' when the score is shared (the display order goes in its own column)."""
+    if tie is None or tie[0] == tie[1]:
+        return f"{rank}위"
+    return f"공동 {tie[0]}–{tie[1]}위"
+
+
+def rank_label(rank: int, tie: tuple[int, int] | None) -> str:
+    """One-line form for selectors and metrics: '3위' or '공동 2–8위 · 표시순 3'."""
+    text = rank_text(rank, tie)
+    return text if text == f"{rank}위" else f"{text} · 표시순 {rank}"
 
 
 def top_rows(rows: list[dict[str, Any]], n: int = 10) -> list[dict[str, Any]]:
@@ -121,22 +188,44 @@ def load_profile(path: Path = PROFILE_PATH) -> dict[str, Any] | None:
     path = Path(path)
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = read_json(path)
+    if not isinstance(data, dict):  # item 99: a broken file counts as "no survey yet" (+ page warning)
+        return None
     return {"profile": data.get("profile"), "eligible": bool(data.get("eligible")),
             "created_at": data.get("created_at", "")}
 
 
-def box_order(profile: str | None) -> list[str]:
-    """Per-stock expert boxes: quant first, then the reference boxes in the profile's order."""
+def profile_mismatch_notice(saved: dict[str, Any] | None, selected: str | None) -> str | None:
+    """Sidebar warning when the viewed profile differs from the saved survey result (item 100)."""
+    if not saved or not saved.get("eligible") or not saved.get("profile") or selected is None:
+        return None
+    if selected == saved["profile"]:
+        return None
+    return (f"설문 결과({PROFILE_LABELS[saved['profile']]})와 다른 성향을 보고 있습니다 — "
+            "적합성 판단은 설문 결과 기준입니다.")
+
+
+def box_order(profile: str | None, eligible: bool = True) -> list[str]:
+    """Per-stock expert boxes: quant first, then the reference boxes in the profile's order.
+    A 'not eligible' survey result gets the reference boxes only, in the neutral order (item 95)."""
+    if not eligible:
+        return list(STOCK_REFERENCE_BOXES)
     return [QUANT_BOX, *REFERENCE_ORDER.get(profile or "neutral", STOCK_REFERENCE_BOXES)]
+
+
+def reference_stock_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Stock picker for a 'not eligible' result (item 95): code order, name/code only,
+    so neither the order nor the default choice carries the model ranking."""
+    return sorted(({"stock_code": r["stock_code"], "name": r["name"]} for r in rows),
+                  key=lambda r: r["stock_code"])
 
 
 def box_layer(key: str) -> str:
     return "recommendation" if key == QUANT_BOX else "reference"
 
 
-def quant_summary(quant_card: dict[str, Any]) -> str:
-    """One line, card values only: rank / n, percentile, strategy holding state."""
+def quant_summary(quant_card: dict[str, Any], tie: tuple[int, int] | None = None) -> str:
+    """One line, card values only: rank / n (shared ranks as a range, item 100), percentile, holding state."""
     r, s = quant_card["ranking"], quant_card["strategy"]
     if s["held_buffered"] is None:
         held = "전략 보유 정보 없음"
@@ -145,6 +234,8 @@ def quant_summary(quant_card: dict[str, Any]) -> str:
     else:
         held = "전략 보유 아님"
     pct = "백분위 n/a" if r["percentile"] is None else f"백분위 {r['percentile']:.0%}"
+    if tie is not None and tie[0] != tie[1]:
+        return f"{rank_label(r['rank'], tie)} / {r['n_stocks']} · {pct} · {held}"
     return f"순위 {r['rank']} / {r['n_stocks']} · {pct} · {held}"
 
 
@@ -250,11 +341,14 @@ def disclosure_groups(card: dict[str, Any], collapse_over: int = COLLAPSE_OVER) 
 
 def load_market(day: str, root: Path = CARDS_ROOT) -> dict[str, Any] | None:
     """The page-level market card of one decision date (reports/analyst_cards/<T>/market.json)."""
-    path = Path(root) / day / "market.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    return read_json(Path(root) / day / "market.json")
 
 
 PROFILE_RANK_LABEL = "성향 반영 순위"  # item 92; never "추천" (item 77)
+NOT_ELIGIBLE_NOTICE = (  # item 95: the ranking layer is hidden, the reference layer stays
+    "투자성향 진단 결과 '제공 불가' — 모델 순위·성향 순위·전략 보유 종목은 표시하지 않습니다. "
+    "아래는 모델이 쓰지 않는 참고 정보입니다."
+)
 
 
 def decision_basis(day: str) -> str:
@@ -264,8 +358,7 @@ def decision_basis(day: str) -> str:
 
 def load_profile_ranks(day: str, root: Path = CARDS_ROOT) -> dict[str, Any] | None:
     """profile_ranks.json of one decision date (item 92), or None for days before it existed."""
-    path = Path(root) / day / PROFILE_RANKS_FILE
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    return read_json(Path(root) / day / PROFILE_RANKS_FILE)
 
 
 def profile_rank_rows(card: dict[str, Any] | None, profile: str | None, n: int | None = 10) -> list[dict[str, Any]] | None:

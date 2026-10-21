@@ -159,7 +159,7 @@ def test_daily_batch_stops_on_token_error(tmp_path) -> None:
     ("module", "argv"),
     [
         (flow_script, ["--lookback-days", "10", "005930", "000660"]),
-        (daily_script, ["005930", "000660"]),
+        (daily_script, ["005930", "000660", "--force"]),
         (minute_script, ["--only", "005930", "000660", "--force", "--no-skip-existing", "--sleep", "0"]),
     ],
 )
@@ -176,3 +176,15 @@ def test_nightly_scripts_exit_1_with_one_stop_line(
     assert client.calls == 1  # first request only, then the step stops
     err = capsys.readouterr().err
     assert err.count("토큰 발급 실패") == 1
+
+
+def test_daily_script_stops_before_final_time_without_calling_kiwoom(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Item 98: guard runs before any client is created; --force skips it.
+    monkeypatch.setattr(daily_script, "daily_fetch_error", lambda base, now: "guard message")
+    monkeypatch.setattr(daily_script.KiwoomClient, "from_env",
+                        classmethod(lambda cls: pytest.fail("no client before the guard")))
+    monkeypatch.setattr(sys, "argv", [daily_script.__name__, "005930"])
+    assert daily_script.main() == 2
+    assert "guard message" in capsys.readouterr().err
